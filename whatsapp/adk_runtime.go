@@ -24,8 +24,8 @@ type runtime struct {
 
 // newRuntime validates that the launcher config carries what a run needs.
 func newRuntime(cfg *adklauncher.Config, appName string) (*runtime, error) {
-	
-	// Validate the ADK launcher config. 
+
+	// Validate the ADK launcher config.
 	// The launcher config is required to have an AgentLoader and a SessionService, which are needed to run the agent in-process.
 	switch {
 	case cfg == nil:
@@ -76,12 +76,14 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 	sessionID := req.SessionID
 	if sessionID == "" {
 		// Generate a new session ID. The ADK launcher does this in the REST server, but we don't have that here.
-		// Hyphens are stripped because Vertex AI memory bank rejects them in session IDs. 
+		// Hyphens are stripped because Vertex AI memory bank rejects them in session IDs.
 		// (Matches what the upstream ADK launchers do.)
-		sessionID = strings.ReplaceAll(uuid.NewString(), "-", "")
+		// The prefix marks the session as this channel's, so a run from the web
+		// console or a cron is never resumed here. See [SessionPrefix].
+		sessionID = SessionPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	}
 
-	// Load the agent to run. 
+	// Load the agent to run.
 	// The launcher config has the AgentLoader, which knows how to load the agent by name.
 	target, err := rt.cfg.AgentLoader.LoadAgent(rt.appName)
 	if err != nil {
@@ -103,7 +105,7 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		return "", nil, fmt.Errorf("whatsapp: create runner: %w", err)
 	}
 
-	// Set up the run config. 
+	// Set up the run config.
 	// Streaming is off: WhatsApp has no partial-message surface, so partial tokens would only be discarded.
 	runCfg := agent.RunConfig{
 		StreamingMode: agent.StreamingModeNone,
@@ -118,7 +120,7 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		opts = append(opts, runner.WithStateDelta(req.StateDelta))
 	}
 
-	// Run the agent turn. 
+	// Run the agent turn.
 	// The runner returns an event stream that includes the final session state.
 	return sessionID, r.Run(ctx, req.UserID, sessionID, req.Message, runCfg, opts...), nil
 }

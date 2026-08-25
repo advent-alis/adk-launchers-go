@@ -21,22 +21,37 @@ func TestIdleWindowResolver(t *testing.T) {
 		{"no prior sessions starts fresh", nil, ""},
 		{
 			"recent session continues",
-			[]session.Session{fakeSession{id: "s1", updated: now.Add(-2 * time.Hour)}},
-			"s1",
+			[]session.Session{fakeSession{id: SessionPrefix + "s1", updated: now.Add(-2 * time.Hour)}},
+			SessionPrefix + "s1",
 		},
 		{
 			"stale session starts fresh",
-			[]session.Session{fakeSession{id: "s1", updated: now.Add(-25 * time.Hour)}},
+			[]session.Session{fakeSession{id: SessionPrefix + "s1", updated: now.Add(-25 * time.Hour)}},
 			"",
 		},
 		{
 			"most recent wins regardless of list order",
 			[]session.Session{
-				fakeSession{id: "old", updated: now.Add(-10 * time.Hour)},
-				fakeSession{id: "newest", updated: now.Add(-1 * time.Minute)},
-				fakeSession{id: "middle", updated: now.Add(-5 * time.Hour)},
+				fakeSession{id: SessionPrefix + "old", updated: now.Add(-10 * time.Hour)},
+				fakeSession{id: SessionPrefix + "newest", updated: now.Add(-1 * time.Minute)},
+				fakeSession{id: SessionPrefix + "middle", updated: now.Add(-5 * time.Hour)},
 			},
-			"newest",
+			SessionPrefix + "newest",
+		},
+		{
+			"another channel's session is ignored",
+			[]session.Session{
+				fakeSession{id: "906b47030a0d42229da2", updated: now.Add(-1 * time.Minute)},
+			},
+			"",
+		},
+		{
+			"picks this channel's session over a more recent foreign one",
+			[]session.Session{
+				fakeSession{id: "906b47030a0d42229da2", updated: now.Add(-1 * time.Minute)},
+				fakeSession{id: SessionPrefix + "mine", updated: now.Add(-2 * time.Hour)},
+			},
+			SessionPrefix + "mine",
 		},
 	}
 
@@ -66,7 +81,7 @@ func TestIdleWindowResolver_BoundaryIsExclusive(t *testing.T) {
 	got, err := resolver.Resolve(context.Background(), &SessionRequest{
 		AppName:  "my.agent",
 		UserID:   "u",
-		Sessions: fakeSessionService{sessions: []session.Session{fakeSession{id: "s1", updated: now.Add(-time.Hour)}}},
+		Sessions: fakeSessionService{sessions: []session.Session{fakeSession{id: SessionPrefix + "s1", updated: now.Add(-time.Hour)}}},
 	})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)

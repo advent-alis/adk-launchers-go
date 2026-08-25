@@ -149,25 +149,25 @@ type launcher struct {
 	// appName is the ADK app the agent runs for inbound WhatsApp messages.
 	appName string
 	// cfg is the infrastructure this launcher needs. All fields are required.
-	cfg     Config
+	cfg Config
 	// flags is the CLI flag set this launcher parses. It is built once and reused
 	// on every Parse call, so the launcher can be reused in multiple CLI contexts.
-	flags   *flag.FlagSet
+	flags *flag.FlagSet
 
 	// sender is the Twilio client that sends messages and fetches media and templates.
-	sender    Sender
+	sender Sender
 	// media fetches inbound media from Twilio.
 	// It may be nil if the sender does not implement [MediaFetcher].
-	media     MediaFetcher
+	media MediaFetcher
 	// templates fetches templates from Twilio.
 	// It may be nil if the sender does not implement [TemplateFetcher].
 	templates TemplateFetcher
 	// resolver decides which ADK session an inbound WhatsApp message belongs to.
-	resolver  SessionResolver
+	resolver SessionResolver
 	// runtime runs the agent in-process using the services already wired into the
 	// ADK launcher config, so a WhatsApp turn shares session, memory, and artifact
 	// state with every other surface the agent is launched on.
-	runtime   *runtime
+	runtime *runtime
 
 	// catalog is the config catalog joined with the Twilio templates behind it,
 	// resolved once during setup.
@@ -189,15 +189,15 @@ type launcher struct {
 	// setup error is returned on every subsequent call.
 	setupOnce sync.Once
 	// setupErr is the error returned by SetupHostRoutes if the one-time setup failed.
-	setupErr  error
+	setupErr error
 }
 
 // variables to satisfy the [Launcher] interface. They are declared here so the
 // compiler checks the signature at compile time, rather than importing the
 // interface from the web launcher package.
 var (
-	// launcher implements [Launcher] 
-	_ Launcher           = (*launcher)(nil)
+	// launcher implements [Launcher]
+	_ Launcher = (*launcher)(nil)
 	// launcher implements [adkweb.Sublauncher].
 	_ adkweb.Sublauncher = (*launcher)(nil)
 )
@@ -255,7 +255,7 @@ func NewLauncher(appName string, cfg Config, opts ...Option) Launcher {
 	// Add flag set on the launcher
 	l.flags = fs
 
-	// Return the launcher. 
+	// Return the launcher.
 	// (It is ready to serve traffic, but the runtime and catalog are not set up until SetupHostRoutes is called.)
 	return l
 }
@@ -299,18 +299,18 @@ func (l *launcher) UserMessage(webURL string, printer func(v ...any)) {
 // SetupHostRoutes registers the webhook and task handler on go.alis.build/mux.
 // Safe to call more than once; mounting happens once per launcher.
 func (l *launcher) SetupHostRoutes(config *adklauncher.Config) error {
-	
-	// Setup the runtime once: 
-	// 1. validates the config and app name, 
-	// 2. resolves the catalog, and 
+
+	// Setup the runtime once:
+	// 1. validates the config and app name,
+	// 2. resolves the catalog, and
 	// 3. mounts the routes.
 	l.setupOnce.Do(func() {
 		// Create the runtime that runs the agent in-process. It needs the launcher config and the app name, and validates both.
 		if l.runtime, l.setupErr = newRuntime(config, l.appName); l.setupErr != nil {
 			return
 		}
-		// Resolve the catalog once at startup, so the launcher can publish it into session state on every run. 
-		// This is deliberate: a component whose schema does not match its template produces messages that fail 
+		// Resolve the catalog once at startup, so the launcher can publish it into session state on every run.
+		// This is deliberate: a component whose schema does not match its template produces messages that fail
 		// to send, and a send failure reaches the user as silence.
 		if l.setupErr = l.resolveCatalog(); l.setupErr != nil {
 			return
@@ -321,7 +321,7 @@ func (l *launcher) SetupHostRoutes(config *adklauncher.Config) error {
 
 		// The task handler runs agents, so it requires the environment service
 		// account's Google ID token (not public).
-		// The systemPost middleware checks the ID token and rejects requests from any other caller. 
+		// The systemPost middleware checks the ID token and rejects requests from any other caller.
 		alismux.SystemPost(TaskPath, l.handleTask)
 	})
 

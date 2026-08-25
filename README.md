@@ -202,6 +202,19 @@ policy choice and lives behind `SessionResolver`. The default
 younger than 24 hours and starts a fresh one otherwise — no storage beyond the
 ADK session service. `/new` starts a fresh session on demand.
 
+Sessions are also kept to this channel. The same agent is usually reachable from
+a web console or a cron, and those runs share its ADK app — so without a marker a
+WhatsApp message could resume whatever the person was last doing on the web.
+Sessions minted here are prefixed (`SessionPrefix`), and only prefixed sessions
+are continued. A bare UUID from another channel never matches, because the rest
+of a minted id is hex and `w` is not a hex digit.
+
+That is deliberately separate from identity. `UserID` prefixes the phone number
+today, so a WhatsApp sender is already a different ADK user from the same human
+on the console — but if you later resolve phone numbers to platform identities so
+memory follows the person, the session prefix keeps the conversations apart
+anyway.
+
 Replace the policy with `WithSessionResolver`. A resolver receives the session
 service, so it may read prior sessions and their events to decide.
 

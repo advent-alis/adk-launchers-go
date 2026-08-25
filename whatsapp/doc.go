@@ -63,6 +63,14 @@
 // A WhatsApp sender maps to the ADK user ID returned by [UserID], which is
 // prefixed and therefore distinct from the same human signed into the console.
 //
+// Sessions are kept to this channel independently of that, by [SessionPrefix].
+// The same agent is usually reachable from a web console or a cron as well, and
+// those runs share its ADK app — so without a marker, a WhatsApp message could
+// resume whatever the person was last doing on the web. Only sessions minted
+// here carry the prefix, and only those are continued. The two mechanisms are
+// deliberately separate: resolving a phone number to a platform identity later
+// merges memory across channels without also merging conversations.
+//
 // # Components
 //
 // WhatsApp gates interactive messages behind content templates that Meta must

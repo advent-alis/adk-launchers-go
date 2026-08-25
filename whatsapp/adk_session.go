@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/v2/session"
@@ -14,6 +15,19 @@ const DefaultIdleWindow = 24 * time.Hour
 
 // ResetCommand starts a new session regardless of what the resolver would decide.
 const ResetCommand = "/new"
+
+// SessionPrefix marks a session as belonging to this channel. Sessions minted
+// here carry it, and [IdleWindowResolver] continues only sessions that have it.
+//
+// The same agent is usually reachable from more than one place — a web console,
+// a cron — and those runs share the ADK app and, once a phone number is resolved
+// to a platform identity, the user id too. Without a marker, a WhatsApp message
+// would resume whatever the person was last doing on the web, which reads as the
+// agent leaking one conversation into another.
+//
+// The prefix is safe to test for: the rest of a minted id is hex, and "w" is not
+// a hex digit, so an id from any other source can never begin with it.
+const SessionPrefix = "wa"
 
 // SessionRequest is what a [SessionResolver] gets to decide with. It carries the
 // inbound message plus the session service, so a resolver may read prior
@@ -78,10 +92,20 @@ func (r IdleWindowResolver) Resolve(ctx context.Context, req *SessionRequest) (s
 		}
 
 		for _, s := range resp.Sessions {
+			// Sessions without the prefix belong to another channel; continuing
+			// one would resume a conversation held somewhere else.
+			if !strings.HasPrefix(s.ID(), SessionPrefix) {
+				continue
+			}
 			if latest == nil || s.LastUpdateTime().After(latest.LastUpdateTime()) {
 				latest = s
 			}
 		}
+	}
+
+	// A first-time sender has no session to continue.
+	if latest == nil {
+		return "", nil
 	}
 
 	// Determine the idle window.
@@ -96,7 +120,7 @@ func (r IdleWindowResolver) Resolve(ctx context.Context, req *SessionRequest) (s
 	if r.Now != nil {
 		now = r.Now
 	}
-	
+
 	// If the latest session is still within the idle window, continue it.
 	if now().Sub(latest.LastUpdateTime()) < window {
 		// Return the ID of the latest session to continue it.
