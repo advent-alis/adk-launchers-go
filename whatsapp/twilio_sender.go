@@ -60,21 +60,6 @@ var (
 	_ TemplateFetcher = (*twilioSender)(nil)
 )
 
-// newTwilioSender builds a sender for one WhatsApp number.
-func newTwilioSender(cfg Config) *twilioSender {
-	return &twilioSender{
-		client: twilio.NewRestClientWithParams(twilio.ClientParams{
-			Username:   cfg.AccountSid,
-			AccountSid: cfg.AccountSid,
-			Password:   cfg.AuthToken,
-		}),
-		accountSid: cfg.AccountSid,
-		authToken:  cfg.AuthToken,
-		from:       cfg.PhoneNumber,
-		http:       http.DefaultClient,
-	}
-}
-
 // Send implements [Sender].
 func (s *twilioSender) Send(ctx context.Context, msg *Outbound) (string, error) {
 	params := &api.CreateMessageParams{}
@@ -196,23 +181,24 @@ func chunkText(body string) []string {
 			chunks = append(chunks, strings.TrimSpace(string(runes)))
 			break
 		}
+		// Find the last newline or space before the limit, so words survive
+		// the split. Zero means there is nothing to break on.
+		at := 0
+		{
+			for i := MaxTextRunes - 1; i > 0; i-- {
+				if runes[i] == '\n' || runes[i] == ' ' {
+					at = i + 1
+					break
+				}
+			}
+		}
+
 		cut := MaxTextRunes
-		if at := lastBreak(runes[:cut]); at > 0 {
+		if at > 0 {
 			cut = at
 		}
 		chunks = append(chunks, strings.TrimSpace(string(runes[:cut])))
 		runes = runes[cut:]
 	}
 	return chunks
-}
-
-// lastBreak returns the index just after the last newline or space in runes, or
-// 0 when there is none to break on.
-func lastBreak(runes []rune) int {
-	for i := len(runes) - 1; i > 0; i-- {
-		if runes[i] == '\n' || runes[i] == ' ' {
-			return i + 1
-		}
-	}
-	return 0
 }

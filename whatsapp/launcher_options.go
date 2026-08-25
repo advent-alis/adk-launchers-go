@@ -1,0 +1,60 @@
+package whatsapp
+
+import (
+	"strings"
+	"time"
+)
+
+// Option configures optional launcher behaviour.
+type Option func(*launcher)
+
+// WithSessionResolver replaces the default [IdleWindowResolver], which continues
+// the user's most recent session while it is younger than [DefaultIdleWindow].
+//
+// This is the seam for a smarter policy — for example a resolver that reads the
+// recent history from SessionRequest.Sessions and asks a model whether the topic
+// has turned over. A nil resolver is ignored.
+func WithSessionResolver(resolver SessionResolver) Option {
+	return func(l *launcher) {
+		if resolver != nil {
+			l.resolver = resolver
+		}
+	}
+}
+
+// WithIdleWindow sets the idle period on the default resolver. It has no effect
+// once [WithSessionResolver] has replaced that resolver.
+func WithIdleWindow(window IdleWindowResolver) Option {
+	return func(l *launcher) { l.resolver = window }
+}
+
+// WithSender replaces the Twilio sender, for testing a launcher without reaching
+// Twilio. If sender also implements [MediaFetcher] it serves inbound media, and
+// if it implements [TemplateFetcher] it resolves the catalog; otherwise those
+// capabilities are dropped. A nil sender is ignored.
+func WithSender(sender Sender) Option {
+	return func(l *launcher) {
+		if sender == nil {
+			return
+		}
+		l.sender = sender
+		l.media, _ = sender.(MediaFetcher)
+		l.templates, _ = sender.(TemplateFetcher)
+	}
+}
+
+// WithTemplateTimeout caps how long startup waits on Twilio while resolving the
+// catalog. Zero means [DefaultTemplateTimeout].
+func WithTemplateTimeout(timeout time.Duration) Option {
+	return func(l *launcher) { l.templateTimeout = timeout }
+}
+
+// WithBaseURL pins the origin used for the Twilio signature check and the Cloud
+// Task callback, e.g. "https://my-agent-abc123.a.run.app".
+//
+// By default the origin is derived from the inbound request, which is correct on
+// Cloud Run and behind a proxy that preserves Host. Pin it when it is not — a
+// mismatch fails the signature check, since Twilio signs the URL it called.
+func WithBaseURL(baseURL string) Option {
+	return func(l *launcher) { l.pinnedBaseURL = strings.TrimSuffix(baseURL, "/") }
+}

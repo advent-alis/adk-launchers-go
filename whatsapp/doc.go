@@ -158,17 +158,25 @@
 // # Source layout
 //
 // The package is an adapter, and the filenames say which side of it a file sits
-// on:
+// on. The launcher_ files are the wiring; twilio_ and adk_ are the two sides it
+// translates between.
 //
-//	launcher.go          Launcher, Config, options, route mounting, catalog resolution
-//	launcher_routes.go   the webhook and task handlers, and outbound delivery
-//	catalog.go           Component and Catalog — the vocabulary both sides share
-//	twilio_inbound.go    webhook form to [Inbound]
-//	twilio_sender.go     sending messages, fetching media and templates
-//	twilio_template.go   content template to [Resolved] fields
-//	adk_runtime.go       running the agent in-process
-//	adk_session.go       [SessionResolver] and [IdleWindowResolver]
-//	adk_toolset.go       resolved catalog to tools the model sees
+//	launcher.go            route paths, [Config], [Launcher], the launcher type,
+//	                       [NewLauncher], and SetupHostRoutes — everything from
+//	                       what a caller supplies to the server being ready
+//	launcher_options.go    [Option] and the With… functions
+//	launcher_contract.go   the [adkweb.Sublauncher] methods the web launcher calls
+//	launcher_handlers.go   what runs when those routes are hit, and outbound delivery
+//
+//	catalog.go             [Component] and [Catalog] — the vocabulary both sides share
+//
+//	twilio_inbound.go      webhook form to [Inbound]
+//	twilio_sender.go       sending messages, fetching media and templates
+//	twilio_template.go     content template to [Resolved] fields
+//
+//	adk_runtime.go         running the agent in-process
+//	adk_session.go         [UserID], [SessionPrefix], and [SessionResolver]
+//	adk_toolset.go         resolved catalog to tools the model sees
 //
 // # What this package does not do
 //

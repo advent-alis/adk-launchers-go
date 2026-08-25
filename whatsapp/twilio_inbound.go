@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 )
@@ -111,16 +110,4 @@ func (in *Inbound) AgentText() string {
 // IsReset reports whether the user asked to start a fresh session.
 func (in *Inbound) IsReset() bool {
 	return strings.EqualFold(strings.TrimSpace(in.Body), ResetCommand)
-}
-
-// formValues flattens a parsed form to the single-valued map Twilio's signature
-// validator expects.
-func formValues(r *http.Request) map[string]string {
-	params := make(map[string]string, len(r.Form))
-	for key, values := range r.Form {
-		if len(values) > 0 {
-			params[key] = values[0]
-		}
-	}
-	return params
 }

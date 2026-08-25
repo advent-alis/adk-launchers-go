@@ -29,6 +29,16 @@ const ResetCommand = "/new"
 // a hex digit, so an id from any other source can never begin with it.
 const SessionPrefix = "wa"
 
+// UserID returns the ADK user ID for a WhatsApp sender in E.164.
+//
+// The mapping is deterministic and prefixed, so a WhatsApp participant is a
+// distinct ADK user from the same human signed into the console. Sessions and
+// memory therefore do not cross between the two surfaces. Resolving a phone
+// number to a platform identity is a deliberate extra step, not the default.
+func UserID(phoneE164 string) string {
+	return "whatsapp:" + phoneE164
+}
+
 // SessionRequest is what a [SessionResolver] gets to decide with. It carries the
 // inbound message plus the session service, so a resolver may read prior
 // sessions and their events.

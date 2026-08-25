@@ -149,34 +149,94 @@ type slot struct {
 	maxRunes int
 }
 
-// fields turns a slot into one field per variable it declares, or none when the
-// template hard-codes it.
-func (s slot) fields() []Field {
-	matches := placeholderPattern.FindAllStringSubmatch(s.value, -1)
-	out := make([]Field, 0, len(matches))
-	for _, match := range matches {
-		position := match[1]
-		name := s.name
-		if len(matches) > 1 {
-			// A slot mixing several variables needs distinct argument names.
-			name = s.name + "_" + position
-		}
-		out = append(out, Field{
-			Name:        name,
-			Position:    position,
-			Description: s.desc,
-			MaxRunes:    s.maxRunes,
-		})
-	}
-	return out
-}
-
 // resolveTemplate joins a catalog entry with its Twilio template, deriving the
 // argument schema from what the template actually declares.
 func resolveTemplate(comp Component, tmpl *Template) (*Resolved, error) {
-	slots, err := templateSlots(tmpl)
-	if err != nil {
-		return nil, fmt.Errorf("whatsapp: component %q (%s): %w", comp.ID, comp.ContentSid, err)
+	// List the variable-bearing strings of the template, in the order the model
+	// should be asked for them.
+	var slots []slot
+	{
+		body := func(value string) slot {
+			return slot{value: value, name: "text", desc: "Message body shown to the user.", maxRunes: MaxBodyRunes}
+		}
+		decode := func(def any) error {
+			if err := json.Unmarshal(tmpl.Definition, def); err != nil {
+				return fmt.Errorf("whatsapp: component %q (%s): decoding %s definition: %w",
+					comp.ID, comp.ContentSid, tmpl.Kind, err)
+			}
+			return nil
+		}
+
+		switch tmpl.Kind {
+		case Text:
+			var def contentv1.TwilioText
+			if err := decode(&def); err != nil {
+				return nil, err
+			}
+			slots = []slot{body(def.Body)}
+
+		case QuickReply:
+			var def contentv1.TwilioQuickReply
+			if err := decode(&def); err != nil {
+				return nil, err
+			}
+			slots = []slot{body(def.Body)}
+			for i, action := range def.Actions {
+				n := strconv.Itoa(i + 1)
+				slots = append(slots,
+					slot{value: action.Title, name: "button_" + n + "_label",
+						desc: "Text on button " + n + ".", maxRunes: MaxButtonLabelRunes},
+					slot{value: action.Id, name: "button_" + n + "_payload",
+						desc: "Value echoed back when the user taps button " + n + ".", maxRunes: MaxPayloadRunes},
+				)
+			}
+
+		case ListPicker:
+			var def contentv1.TwilioListPicker
+			if err := decode(&def); err != nil {
+				return nil, err
+			}
+			slots = []slot{
+				body(def.Body),
+				{value: def.Button, name: "menu_label",
+					desc: "Label on the button that opens the list.", maxRunes: MaxButtonLabelRunes},
+			}
+			for i, item := range def.Items {
+				n := strconv.Itoa(i + 1)
+				slots = append(slots,
+					slot{value: item.Item, name: "item_" + n + "_title",
+						desc: "Title of row " + n + ".", maxRunes: MaxItemTitleRunes},
+					slot{value: item.Id, name: "item_" + n + "_id",
+						desc: "Value echoed back when the user selects row " + n + ".", maxRunes: MaxPayloadRunes},
+					slot{value: item.Description, name: "item_" + n + "_description",
+						desc: "Secondary line under row " + n + ".", maxRunes: MaxItemDescriptionRunes},
+				)
+			}
+
+		case CallToAction:
+			var def contentv1.TwilioCallToAction
+			if err := decode(&def); err != nil {
+				return nil, err
+			}
+			slots = []slot{body(def.Body)}
+			for i, action := range def.Actions {
+				n := strconv.Itoa(i + 1)
+				slots = append(slots,
+					slot{value: action.Title, name: "button_" + n + "_label",
+						desc: "Text on button " + n + ".", maxRunes: MaxButtonLabelRunes},
+					// A call-to-action button carries exactly one destination; the
+					// template fixes which, so only the populated one has a slot.
+					slot{value: action.Url, name: "button_" + n + "_url",
+						desc: "URL button " + n + " opens.", maxRunes: MaxPayloadRunes},
+					slot{value: action.Phone, name: "button_" + n + "_phone",
+						desc: "Number button " + n + " dials.", maxRunes: MaxPayloadRunes},
+				)
+			}
+
+		default:
+			return nil, fmt.Errorf("whatsapp: component %q (%s): unsupported content type %q, want one of %v",
+				comp.ID, comp.ContentSid, tmpl.Kind, supportedKinds)
+		}
 	}
 
 	resolved := &Resolved{
@@ -185,99 +245,34 @@ func resolveTemplate(comp Component, tmpl *Template) (*Resolved, error) {
 		ContentSid:  comp.ContentSid,
 		Kind:        tmpl.Kind,
 	}
+	// Turn each slot into one field per variable it declares. A slot the template
+	// hard-codes declares none, so the model is never asked for it.
 	seen := make(map[string]bool)
 	for _, s := range slots {
-		for _, field := range s.fields() {
-			if seen[field.Position] {
+		matches := placeholderPattern.FindAllStringSubmatch(s.value, -1)
+		for _, match := range matches {
+			position := match[1]
+			if seen[position] {
 				// Twilio allows one variable in several slots; the first
 				// occurrence names it and the rest reuse that value.
 				continue
 			}
-			seen[field.Position] = true
-			resolved.Fields = append(resolved.Fields, field)
+			seen[position] = true
+
+			name := s.name
+			if len(matches) > 1 {
+				// A slot mixing several variables needs distinct argument names.
+				name = s.name + "_" + position
+			}
+			resolved.Fields = append(resolved.Fields, Field{
+				Name:        name,
+				Position:    position,
+				Description: s.desc,
+				MaxRunes:    s.maxRunes,
+			})
 		}
 	}
 	return resolved, nil
-}
-
-// templateSlots lists the variable-bearing strings of a template, in the order
-// the model should be asked for them.
-func templateSlots(tmpl *Template) ([]slot, error) {
-	body := func(value string) slot {
-		return slot{value: value, name: "text", desc: "Message body shown to the user.", maxRunes: MaxBodyRunes}
-	}
-
-	switch tmpl.Kind {
-	case Text:
-		var def contentv1.TwilioText
-		if err := json.Unmarshal(tmpl.Definition, &def); err != nil {
-			return nil, fmt.Errorf("decoding %s definition: %w", tmpl.Kind, err)
-		}
-		return []slot{body(def.Body)}, nil
-
-	case QuickReply:
-		var def contentv1.TwilioQuickReply
-		if err := json.Unmarshal(tmpl.Definition, &def); err != nil {
-			return nil, fmt.Errorf("decoding %s definition: %w", tmpl.Kind, err)
-		}
-		slots := []slot{body(def.Body)}
-		for i, action := range def.Actions {
-			n := strconv.Itoa(i + 1)
-			slots = append(slots,
-				slot{value: action.Title, name: "button_" + n + "_label",
-					desc: "Text on button " + n + ".", maxRunes: MaxButtonLabelRunes},
-				slot{value: action.Id, name: "button_" + n + "_payload",
-					desc: "Value echoed back when the user taps button " + n + ".", maxRunes: MaxPayloadRunes},
-			)
-		}
-		return slots, nil
-
-	case ListPicker:
-		var def contentv1.TwilioListPicker
-		if err := json.Unmarshal(tmpl.Definition, &def); err != nil {
-			return nil, fmt.Errorf("decoding %s definition: %w", tmpl.Kind, err)
-		}
-		slots := []slot{
-			body(def.Body),
-			{value: def.Button, name: "menu_label",
-				desc: "Label on the button that opens the list.", maxRunes: MaxButtonLabelRunes},
-		}
-		for i, item := range def.Items {
-			n := strconv.Itoa(i + 1)
-			slots = append(slots,
-				slot{value: item.Item, name: "item_" + n + "_title",
-					desc: "Title of row " + n + ".", maxRunes: MaxItemTitleRunes},
-				slot{value: item.Id, name: "item_" + n + "_id",
-					desc: "Value echoed back when the user selects row " + n + ".", maxRunes: MaxPayloadRunes},
-				slot{value: item.Description, name: "item_" + n + "_description",
-					desc: "Secondary line under row " + n + ".", maxRunes: MaxItemDescriptionRunes},
-			)
-		}
-		return slots, nil
-
-	case CallToAction:
-		var def contentv1.TwilioCallToAction
-		if err := json.Unmarshal(tmpl.Definition, &def); err != nil {
-			return nil, fmt.Errorf("decoding %s definition: %w", tmpl.Kind, err)
-		}
-		slots := []slot{body(def.Body)}
-		for i, action := range def.Actions {
-			n := strconv.Itoa(i + 1)
-			slots = append(slots,
-				slot{value: action.Title, name: "button_" + n + "_label",
-					desc: "Text on button " + n + ".", maxRunes: MaxButtonLabelRunes},
-				// A call-to-action button carries exactly one destination; the
-				// template fixes which, so only the populated one has a slot.
-				slot{value: action.Url, name: "button_" + n + "_url",
-					desc: "URL button " + n + " opens.", maxRunes: MaxPayloadRunes},
-				slot{value: action.Phone, name: "button_" + n + "_phone",
-					desc: "Number button " + n + " dials.", maxRunes: MaxPayloadRunes},
-			)
-		}
-		return slots, nil
-	}
-
-	return nil, fmt.Errorf("unsupported content type %q, want one of %v", tmpl.Kind, supportedKinds)
 }
 
 // supportedKinds lists the Twilio content types this package can render.

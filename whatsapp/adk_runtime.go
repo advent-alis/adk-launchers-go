@@ -22,30 +22,6 @@ type runtime struct {
 	appName string
 }
 
-// newRuntime validates that the launcher config carries what a run needs.
-func newRuntime(cfg *adklauncher.Config, appName string) (*runtime, error) {
-
-	// Validate the ADK launcher config.
-	// The launcher config is required to have an AgentLoader and a SessionService, which are needed to run the agent in-process.
-	switch {
-	case cfg == nil:
-		return nil, fmt.Errorf("whatsapp: launcher config is required")
-	case cfg.AgentLoader == nil:
-		return nil, fmt.Errorf("whatsapp: launcher config has no AgentLoader")
-	case cfg.SessionService == nil:
-		return nil, fmt.Errorf("whatsapp: launcher config has no SessionService")
-	}
-
-	// Validate the app name.
-	appName = strings.TrimSpace(appName)
-	if appName == "" {
-		return nil, fmt.Errorf("whatsapp: app name is required")
-	}
-
-	// Return a runtime that can run the agent in-process.
-	return &runtime{cfg: cfg, appName: appName}, nil
-}
-
 // runRequest is one agent turn.
 type runRequest struct {
 	// UserID is the ADK user the WhatsApp sender maps to.
