@@ -24,6 +24,9 @@ type runtime struct {
 
 // newRuntime validates that the launcher config carries what a run needs.
 func newRuntime(cfg *adklauncher.Config, appName string) (*runtime, error) {
+	
+	// Validate the ADK launcher config. 
+	// The launcher config is required to have an AgentLoader and a SessionService, which are needed to run the agent in-process.
 	switch {
 	case cfg == nil:
 		return nil, fmt.Errorf("whatsapp: launcher config is required")
@@ -32,10 +35,14 @@ func newRuntime(cfg *adklauncher.Config, appName string) (*runtime, error) {
 	case cfg.SessionService == nil:
 		return nil, fmt.Errorf("whatsapp: launcher config has no SessionService")
 	}
+
+	// Validate the app name.
 	appName = strings.TrimSpace(appName)
 	if appName == "" {
 		return nil, fmt.Errorf("whatsapp: app name is required")
 	}
+
+	// Return a runtime that can run the agent in-process.
 	return &runtime{cfg: cfg, appName: appName}, nil
 }
 
@@ -56,6 +63,8 @@ type runRequest struct {
 // stream. Streaming is off: WhatsApp has no partial-message surface, so partial
 // tokens would only be discarded.
 func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*session.Event, error], error) {
+
+	// Validate the request.
 	if req.UserID == "" {
 		return "", nil, fmt.Errorf("whatsapp: user id is required")
 	}
@@ -63,13 +72,17 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		return "", nil, fmt.Errorf("whatsapp: message has no parts")
 	}
 
+	// Pick a session ID to run against. If the request has one, continue it; if not, mint a new one.
 	sessionID := req.SessionID
 	if sessionID == "" {
-		// Hyphens are stripped because Vertex AI memory bank rejects them in
-		// session IDs. Matches what the upstream ADK launchers do.
+		// Generate a new session ID. The ADK launcher does this in the REST server, but we don't have that here.
+		// Hyphens are stripped because Vertex AI memory bank rejects them in session IDs. 
+		// (Matches what the upstream ADK launchers do.)
 		sessionID = strings.ReplaceAll(uuid.NewString(), "-", "")
 	}
 
+	// Load the agent to run. 
+	// The launcher config has the AgentLoader, which knows how to load the agent by name.
 	target, err := rt.cfg.AgentLoader.LoadAgent(rt.appName)
 	if err != nil {
 		return "", nil, fmt.Errorf("whatsapp: load agent %q: %w", rt.appName, err)
@@ -90,6 +103,8 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		return "", nil, fmt.Errorf("whatsapp: create runner: %w", err)
 	}
 
+	// Set up the run config. 
+	// Streaming is off: WhatsApp has no partial-message surface, so partial tokens would only be discarded.
 	runCfg := agent.RunConfig{
 		StreamingMode: agent.StreamingModeNone,
 		// Inbound WhatsApp media arrives as inline bytes; persisting it as an
@@ -97,9 +112,13 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		SaveInputBlobsAsArtifacts: true,
 	}
 
+	// Add component catalog to the session state via StateDelta. The launcher uses this to publish the component catalog under [StateKey].
 	var opts []runner.RunOption
 	if len(req.StateDelta) > 0 {
 		opts = append(opts, runner.WithStateDelta(req.StateDelta))
 	}
+
+	// Run the agent turn. 
+	// The runner returns an event stream that includes the final session state.
 	return sessionID, r.Run(ctx, req.UserID, sessionID, req.Message, runCfg, opts...), nil
 }

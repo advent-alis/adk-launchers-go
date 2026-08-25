@@ -64,11 +64,24 @@ type IdleWindowResolver struct {
 }
 
 // Resolve implements [SessionResolver].
+// Returns the ID of the session to continue, or "" to start a fresh session.
 func (r IdleWindowResolver) Resolve(ctx context.Context, req *SessionRequest) (string, error) {
-	// Get the most recent session for this user. 
-	latest, err := latestSession(ctx, req.Sessions, req.AppName, req.UserID)
-	if err != nil || latest == nil {
-		return "", err
+	// Get the most recent session for this user.
+	var latest session.Session
+	{
+		if req.Sessions == nil {
+			return "", fmt.Errorf("whatsapp: session service is required to resolve a session")
+		}
+		resp, err := req.Sessions.List(ctx, &session.ListRequest{AppName: req.AppName, UserID: req.UserID})
+		if err != nil {
+			return "", fmt.Errorf("whatsapp: list sessions for %q: %w", req.UserID, err)
+		}
+
+		for _, s := range resp.Sessions {
+			if latest == nil || s.LastUpdateTime().After(latest.LastUpdateTime()) {
+				latest = s
+			}
+		}
 	}
 
 	// Determine the idle window.
@@ -77,35 +90,19 @@ func (r IdleWindowResolver) Resolve(ctx context.Context, req *SessionRequest) (s
 		// Use the default if not set.
 		window = DefaultIdleWindow
 	}
+
 	// Determine the current time.
 	now := time.Now
 	if r.Now != nil {
 		now = r.Now
 	}
+	
 	// If the latest session is still within the idle window, continue it.
 	if now().Sub(latest.LastUpdateTime()) < window {
 		// Return the ID of the latest session to continue it.
 		return latest.ID(), nil
 	}
+
+	// No session is recent enough; start a fresh one.
 	return "", nil
-}
-
-// latestSession returns the user's most recently updated session, or nil when
-// they have none.
-func latestSession(ctx context.Context, svc session.Service, appName, userID string) (session.Session, error) {
-	if svc == nil {
-		return nil, fmt.Errorf("whatsapp: session service is required to resolve a session")
-	}
-	resp, err := svc.List(ctx, &session.ListRequest{AppName: appName, UserID: userID})
-	if err != nil {
-		return nil, fmt.Errorf("whatsapp: list sessions for %q: %w", userID, err)
-	}
-
-	var latest session.Session
-	for _, s := range resp.Sessions {
-		if latest == nil || s.LastUpdateTime().After(latest.LastUpdateTime()) {
-			latest = s
-		}
-	}
-	return latest, nil
 }
