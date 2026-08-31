@@ -34,11 +34,14 @@ type Inbound struct {
 	RepliedToMessageSid string `json:"repliedToMessageSid,omitempty"`
 
 	// ButtonText and ButtonPayload are set when the user tapped a quick-reply
-	// button. Payload is the value the agent supplied when sending it.
+	// button. 
 	ButtonText    string `json:"buttonText,omitempty"`
+	// ButtonPayload is the value the agent supplied when sending the button.
 	ButtonPayload string `json:"buttonPayload,omitempty"`
 	// ListTitle and ListID are set when the user picked a list-picker row.
 	ListTitle string `json:"listTitle,omitempty"`
+	// ListID is set when the user picked a list-picker row. 
+	// It is the value the agent supplied when sending the list.
 	ListID    string `json:"listId,omitempty"`
 
 	// Media holds the attachments on this message.
@@ -57,6 +60,10 @@ type Attachment struct {
 // parsed the form already, so the same values can be reused for signature
 // validation.
 func parseInbound(form map[string][]string) *Inbound {
+
+	// Function to get the first value of a form key, or "" if missing. Twilio sends
+	// empty values as the empty string, so we don't need to distinguish between
+	// missing and empty.
 	get := func(key string) string {
 		if v := form[key]; len(v) > 0 {
 			return v[0]
@@ -64,6 +71,7 @@ func parseInbound(form map[string][]string) *Inbound {
 		return ""
 	}
 
+	// Build the Inbound struct from the form values
 	in := &Inbound{
 		MessageSid:          get("MessageSid"),
 		From:                strings.TrimPrefix(get("From"), "whatsapp:"),
@@ -77,6 +85,9 @@ func parseInbound(form map[string][]string) *Inbound {
 		ListID:              get("ListId"),
 	}
 
+	// Scan for media attachments, up to the maximum allowed by Twilio
+	// Twilio sends MediaUrl0, MediaUrl1, ..., MediaUrlN, and stops at the first
+	// missing one. We also read MediaContentType{i} for each attachment.
 	for i := range maxMediaAttachments {
 		url := get("MediaUrl" + strconv.Itoa(i))
 		if url == "" {
@@ -87,6 +98,8 @@ func parseInbound(form map[string][]string) *Inbound {
 			ContentType: get("MediaContentType" + strconv.Itoa(i)),
 		})
 	}
+
+	// Return the parsed Inbound
 	return in
 }
 
@@ -97,6 +110,9 @@ func parseInbound(form map[string][]string) *Inbound {
 // typed the word Yes" — and so the payload the agent originally attached to that
 // button comes back to it.
 func (in *Inbound) AgentText() string {
+	// If the user tapped a button, report it as a sentence with the payload.
+	// If the user picked a list row, report it as a sentence with the value.
+	// Otherwise, return the raw body text.
 	switch {
 	case in.ButtonPayload != "":
 		return fmt.Sprintf("The user tapped the %q button (value: %s).", in.ButtonText, in.ButtonPayload)

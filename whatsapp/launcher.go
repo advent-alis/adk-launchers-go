@@ -52,6 +52,7 @@ type Config struct {
 // Launcher is the public surface of [NewLauncher]. Compose it with
 // go.alis.build/adk/launchers/web.NewLauncher.
 type Launcher interface {
+	// The launcher is a sublauncher, so it implements [adkweb.Sublauncher].
 	adkweb.Sublauncher
 	// SetupHostRoutes registers this launcher's routes on the process-wide mux.
 	//

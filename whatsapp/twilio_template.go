@@ -61,6 +61,7 @@ type Template struct {
 // TemplateFetcher reads a content template's definition from Twilio. The
 // launcher's Twilio sender implements it; [WithSender] can replace both.
 type TemplateFetcher interface {
+	// FetchTemplate fetches a Twilio content template by its SID, returning the
 	FetchTemplate(ctx context.Context, contentSid string) (*Template, error)
 }
 

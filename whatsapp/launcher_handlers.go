@@ -21,6 +21,7 @@ import (
 // seconds, and an agent turn takes far longer than that. So nothing expensive
 // happens here — the message is validated, parsed, and handed off.
 func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
+	// Parse the form values. Twilio sends them as application/x-www-form-urlencoded.
 	if err := r.ParseForm(); err != nil {
 		return alismux.BadRequestErr("parsing form: %v", err)
 	}
@@ -43,6 +44,7 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 	}
 	validator := client.NewRequestValidator(l.cfg.AuthToken)
 	signature := r.Header.Get("X-Twilio-Signature")
+
 	// Flatten the parsed form to the single-valued map the validator expects.
 	params := make(map[string]string, len(r.Form))
 	{
@@ -53,16 +55,29 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	// Reject the webhook if the signature is invalid. Twilio does not retry a webhook that returns 401 Unauthorized, so we do not need to log or alert on this.
+	// The signature is a hash of the URL and the form values, keyed by the Twilio
+	// auth token. It is not a secret: anyone can compute it if they know the
+	// auth token. But only Twilio knows the auth token, so only Twilio can produce
+	// a valid signature.
+	//
+	// This check must happen before any other processing, because it proves that
+	// Twilio sent the webhook. Otherwise an attacker could send a fake webhook
+	// with arbitrary form values and make us run an agent on them.
 	if !validator.Validate(callbackURL+WebhookPath, params, signature) {
 		alog.Warnf(r.Context(), "whatsapp: rejecting webhook with invalid signature for %s", callbackURL+WebhookPath)
 		return alismux.UnauthorizedErr("invalid twilio signature")
 	}
 
+	// Parse the inbound message. 
+	// This is cheap: the form is small (the ack budget is tight) and the task body small 
+	// (Cloud Tasks caps it at 1 MB, well under WhatsApp's 16 MB media limit).
 	in := parseInbound(r.Form)
 	if in.From == "" {
 		return alismux.BadRequestErr("webhook has no sender")
 	}
 
+	// Marshal the inbound message to JSON and schedule a task to run the agent on it.
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("whatsapp: marshal inbound: %w", err)
@@ -76,7 +91,10 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("whatsapp: schedule task on queue %q: %w", l.cfg.Queue, err)
 	}
 
+	// Acknowledge the webhook. Twilio does not retry a webhook that returns 200 OK.
 	w.WriteHeader(http.StatusOK)
+
+	// Return nil so the mux does not write an error page on top of our 200 OK.
 	return nil
 }
 

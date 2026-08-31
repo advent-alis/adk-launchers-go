@@ -36,21 +36,29 @@ type Outbound struct {
 // The launcher builds a Twilio-backed Sender from its [Config]. Replace it with
 // [WithSender] to test a launcher without reaching Twilio.
 type Sender interface {
+	// Send sends one message, either free text or a content template with its
+	// variables. It returns the Twilio SID of the message, or an error.
 	Send(ctx context.Context, msg *Outbound) (sid string, err error)
 }
 
 // MediaFetcher retrieves inbound media. The launcher's Twilio sender doubles as
 // one, since Twilio media URLs need the account credentials.
 type MediaFetcher interface {
+	// Fetch fetches the media at Twilio's URL, returning its bytes or an error.
 	Fetch(ctx context.Context, mediaURL string) ([]byte, error)
 }
 
 // twilioSender sends over the Twilio REST API and fetches media from it.
 type twilioSender struct {
+	// The Twilio client is used to send messages and fetch content templates.
 	client     *twilio.RestClient
+	// The Twilio account SID and auth token, used to fetch media.
 	accountSid string
+	// The Twilio account auth token, used to fetch media.
 	authToken  string
+	// The Twilio WhatsApp number in E.164, without the "whatsapp:" prefix.
 	from       string // E.164, without the "whatsapp:" prefix
+	// The HTTP client to fetch media. It must be configured with the account
 	http       *http.Client
 }
 
@@ -60,12 +68,17 @@ var (
 	_ TemplateFetcher = (*twilioSender)(nil)
 )
 
+// Send 
+// sends one message, either free text or a content template with its
+// variables. It returns the Twilio SID of the message, or an error.
 // Send implements [Sender].
 func (s *twilioSender) Send(ctx context.Context, msg *Outbound) (string, error) {
+	// Create message params: to & from
 	params := &api.CreateMessageParams{}
 	params.SetFrom("whatsapp:" + s.from)
 	params.SetTo("whatsapp:" + msg.To)
 
+	// Set message content based on its type
 	switch {
 	case msg.ContentSid != "":
 		params.SetContentSid(msg.ContentSid)
@@ -82,6 +95,7 @@ func (s *twilioSender) Send(ctx context.Context, msg *Outbound) (string, error) 
 		return "", fmt.Errorf("whatsapp: outbound message has neither text nor a content sid")
 	}
 
+	// Send the message via Twilio's API
 	resp, err := s.client.Api.CreateMessage(params)
 	if err != nil {
 		return "", fmt.Errorf("whatsapp: create message to %s: %w", msg.To, err)
@@ -89,6 +103,8 @@ func (s *twilioSender) Send(ctx context.Context, msg *Outbound) (string, error) 
 	if resp.Sid == nil {
 		return "", fmt.Errorf("whatsapp: twilio returned no message sid")
 	}
+
+	// Return the Twilio response SID
 	return *resp.Sid, nil
 }
 
@@ -150,6 +166,8 @@ func (s *twilioSender) FetchTemplate(_ context.Context, contentSid string) (*Tem
 	if err != nil {
 		return nil, fmt.Errorf("whatsapp: re-encode template %s definition: %w", contentSid, err)
 	}
+
+	
 	return &Template{ContentSid: contentSid, Kind: chosen, Definition: encoded}, nil
 }
 
