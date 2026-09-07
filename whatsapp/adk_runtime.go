@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"strings"
 
-	"github.com/google/uuid"
 	"google.golang.org/adk/v2/agent"
 	adklauncher "google.golang.org/adk/v2/cmd/launcher"
 	"google.golang.org/adk/v2/runner"
@@ -48,15 +46,16 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 		return "", nil, fmt.Errorf("whatsapp: message has no parts")
 	}
 
-	// Pick a session ID to run against. If the request has one, continue it; if not, mint a new one.
+	// Pick a session to run against. If the request has one, continue it; if not,
+	// open a new one. The ADK launcher's REST server does this too, but we don't
+	// have that here.
 	sessionID := req.SessionID
 	if sessionID == "" {
-		// Generate a new session ID. The ADK launcher does this in the REST server, but we don't have that here.
-		// Hyphens are stripped because Vertex AI memory bank rejects them in session IDs.
-		// (Matches what the upstream ADK launchers do.)
-		// The prefix marks the session as this channel's, so a run from the web
-		// console or a cron is never resumed here. See [SessionPrefix].
-		sessionID = SessionPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
+		var err error
+		sessionID, err = createSession(ctx, rt.cfg.SessionService, rt.appName, req.UserID)
+		if err != nil {
+			return "", nil, err
+		}
 	}
 
 	// Load the agent to run.
@@ -69,13 +68,17 @@ func (rt *runtime) run(ctx context.Context, req runRequest) (string, iter.Seq2[*
 	// A runner per turn matches the stock ADK REST server: it rebuilds the agent
 	// tree and plugin manager, isolating concurrent runs from each other.
 	r, err := runner.New(runner.Config{
-		AppName:           rt.appName,
-		Agent:             target,
-		SessionService:    rt.cfg.SessionService,
-		MemoryService:     rt.cfg.MemoryService,
-		ArtifactService:   rt.cfg.ArtifactService,
-		PluginConfig:      rt.cfg.PluginConfig,
-		AutoCreateSession: true,
+		AppName:         rt.appName,
+		Agent:           target,
+		SessionService:  rt.cfg.SessionService,
+		MemoryService:   rt.cfg.MemoryService,
+		ArtifactService: rt.cfg.ArtifactService,
+		PluginConfig:    rt.cfg.PluginConfig,
+		// A new session is created above, so every ID reaching the runner is one
+		// that exists. Auto-creation would instead create whatever ID it is
+		// handed, turning a session that has since been deleted into a fresh
+		// empty one rather than the not-found error it should be.
+		AutoCreateSession: false,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("whatsapp: create runner: %w", err)

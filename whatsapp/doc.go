@@ -56,6 +56,10 @@
 // [WithSessionResolver]; a resolver receives the session service and may read
 // prior sessions and their events to decide.
 //
+// New sessions are created by this package, not by the runner, so a resolver is
+// taken at its word: an ID it returns for a session that no longer exists is a
+// not-found error rather than a silently empty conversation under that ID.
+//
 // Long-horizon recall is a separate concern with its own ADK answer: configure a
 // MemoryService on the launcher config and the agent remembers across sessions
 // without this package holding old conversations in context.

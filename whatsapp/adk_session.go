@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/session"
 )
 
@@ -67,8 +68,15 @@ type SessionRequest struct {
 // The launcher's default is [IdleWindowResolver]; supply your own with
 // [WithSessionResolver] — for example one that reads the recent history from
 // SessionRequest.Sessions and asks a model whether the topic has turned over.
+//
+// A resolver chooses among sessions that exist; it does not mint them. Returning
+// "" is the only way to ask for a new session — the launcher then creates one
+// itself, carrying [SessionPrefix]. An ID that does not belong to an existing
+// session of this app and user fails the turn as not-found.
 type SessionResolver interface {
 	// Resolve returns the session ID to continue, or "" to start a fresh session.
+	// The ID must be one of this app and user's existing sessions; anything else
+	// fails the turn. Return "" to have the launcher create a new session.
 	Resolve(ctx context.Context, req *SessionRequest) (string, error)
 }
 
@@ -139,4 +147,33 @@ func (r IdleWindowResolver) Resolve(ctx context.Context, req *SessionRequest) (s
 
 	// No session is recent enough; start a fresh one.
 	return "", nil
+}
+
+// createSession opens a new session for this channel and returns its ID.
+//
+// The session is created here rather than left to the runner's
+// AutoCreateSession, which creates whatever session ID it is handed. That would
+// make a resolver returning a stale or foreign ID indistinguishable from a first
+// message: rather than failing, the run would continue in a brand-new empty
+// session under that ID. With creation owned here, the only session IDs the
+// runner ever sees are ones that exist, and anything else is a not-found error
+// from the session service.
+func createSession(ctx context.Context, svc session.Service, appName, userID string) (string, error) {
+	if svc == nil {
+		return "", fmt.Errorf("whatsapp: session service is required to create a session")
+	}
+
+	// Hyphens are stripped because Vertex AI memory bank rejects them in session
+	// IDs. (Matches what the upstream ADK launchers do.) The prefix marks the
+	// session as this channel's, so a run from the web console or a cron is never
+	// resumed here. See [SessionPrefix].
+	id := SessionPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
+
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: appName, UserID: userID, SessionID: id})
+	if err != nil {
+		return "", fmt.Errorf("whatsapp: create session for %q: %w", userID, err)
+	}
+
+	// The service is the authority on the ID it minted.
+	return resp.Session.ID(), nil
 }
