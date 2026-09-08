@@ -42,6 +42,31 @@
 // session, so it is registered with SystemPost: Cloud Tasks attaches an OIDC
 // token as the environment service account, and SystemPost validates it.
 //
+// # Admission
+//
+// The signature proves a message came from Twilio. It says nothing about who
+// sent it — a sender is a phone number, and a phone number is not an account.
+// Closing that gap needs an identity system this package deliberately knows
+// nothing about, so it lives behind [Gate].
+//
+// Without one, every sender reaches the agent as the ADK user [UserID] derives
+// from their number: right for an agent that serves whoever messages it. With
+// one, [Gate.Admit] runs first on every message and either names the ADK user the
+// turn runs as, or refuses and hands back the message to send instead —
+// typically a template with a sign-in button.
+//
+// It runs on the task rather than the webhook, though it is logically the first
+// thing after the signature. Admitting a sender usually costs a network call and
+// sometimes an outbound message, which does not fit the webhook's seconds-long
+// ack budget; and deciding here keeps the resolved identity out of the task
+// payload, where it would become one more field the handler has to trust.
+//
+// A gate is the perimeter in the strong sense: it runs before any attachment is
+// fetched, before a session is resolved or created, and before the agent is
+// loaded. Nothing about a refused sender is recorded, which is the point — the
+// alternative leaves a stranger's message in the session history of whoever the
+// number is bound to later.
+//
 // # Sessions
 //
 // WhatsApp has no thread concept: an inbound message carries a sender, a
@@ -173,6 +198,7 @@
 //	                       what a caller supplies to the server being ready
 //	launcher_options.go    [Option] and the With… functions
 //	launcher_contract.go   the [adkweb.Sublauncher] methods the web launcher calls
+//	launcher_gate.go       [Gate] — who a sender is, and whether they may talk
 //	launcher_handlers.go   what runs when those routes are hit, and outbound delivery
 //
 //	catalog.go             [Component] and [Catalog] — the vocabulary both sides share

@@ -34,8 +34,13 @@ const SessionPrefix = "wa"
 //
 // The mapping is deterministic and prefixed, so a WhatsApp participant is a
 // distinct ADK user from the same human signed into the console. Sessions and
-// memory therefore do not cross between the two surfaces. Resolving a phone
-// number to a platform identity is a deliberate extra step, not the default.
+// memory therefore do not cross between the two surfaces.
+//
+// This is the identity of an unidentified sender, and it is what a launcher with
+// no [Gate] runs every turn as. A gate is the deliberate extra step: it resolves
+// the number to a platform identity and returns that as the ADK user instead, at
+// which point the two surfaces are one user and share memory. Conversations stay
+// apart either way — see [SessionPrefix].
 func UserID(phoneE164 string) string {
 	return "whatsapp:" + phoneE164
 }

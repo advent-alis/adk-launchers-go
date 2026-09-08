@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -117,6 +118,68 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx := r.Context()
 
+	// Admit the sender, and learn who the agent runs as.
+	//
+	// This is the perimeter, and it is deliberately the first thing after the
+	// payload: nothing below has happened yet, so a refused sender costs no media
+	// fetch, touches no session, and leaves no message in a conversation history.
+	// Without a gate every sender is admitted as the ADK user derived from their
+	// number, which is this package's behaviour on its own.
+	userID := UserID(in.From)
+	stateDelta := l.stateDelta
+	if l.gate != nil {
+		decision, err := l.gate.Admit(ctx, &GateRequest{PhoneNumber: in.From, Text: in.AgentText()})
+		if err != nil {
+			return fmt.Errorf("whatsapp: gate %s: %w", in.From, err)
+		}
+
+		if decision == nil {
+			return fmt.Errorf("whatsapp: gate %s returned neither a decision nor an error", in.From)
+		}
+
+		// No user named is a refusal. Say whatever the gate wanted said, and run
+		// nothing — a refusal is a decision, so the task is done, not failed.
+		if decision.UserID == "" {
+			if decision.Reply == nil {
+				alog.Infof(ctx, "whatsapp: refusing %s with no reply to send", in.From)
+				return nil
+			}
+
+			// Aimed at in.From, never decision.Reply.To: a gate handing over a
+			// message must not be able to send it to a number other than the one
+			// in play. A template goes as the single message it is; free text is
+			// split the way a model reply is below.
+			if decision.Reply.ContentSid != "" {
+				_, err := l.sender.Send(ctx, &Outbound{
+					To:               in.From,
+					ContentSid:       decision.Reply.ContentSid,
+					ContentVariables: decision.Reply.ContentVariables,
+				})
+				return err
+			}
+			for _, chunk := range chunkText(decision.Reply.Text) {
+				if _, err := l.sender.Send(ctx, &Outbound{To: in.From, Text: chunk}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		userID = decision.UserID
+
+		// Merge the gate's state under the launcher's own, mutating neither:
+		// l.stateDelta is built once and reused on every message. The launcher's
+		// keys win because [StateKey] holds the resolved catalog the model's
+		// component tools are derived from, and a gate overwriting it would leave
+		// the model holding tools whose schemas no longer match their templates —
+		// sends that fail, which reach the user as silence.
+		if len(decision.State) > 0 {
+			stateDelta = make(map[string]any, len(l.stateDelta)+len(decision.State))
+			maps.Copy(stateDelta, decision.State)
+			maps.Copy(stateDelta, l.stateDelta)
+		}
+	}
+
 	// Turn the inbound message into the agent's user turn, fetching any media
 	// from Twilio as inline bytes. A nil message means there is nothing to run on.
 	var msg *genai.Content
@@ -152,7 +215,6 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 
 	// Decide which session this message belongs to: the reset command always
 	// starts a fresh one, otherwise the configured resolver decides.
-	userID := UserID(in.From)
 	var sessionID string
 	{
 		if !in.IsReset() {
@@ -174,7 +236,7 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 		UserID:     userID,
 		SessionID:  sessionID,
 		Message:    msg,
-		StateDelta: l.stateDelta,
+		StateDelta: stateDelta,
 	})
 	if err != nil {
 		return err

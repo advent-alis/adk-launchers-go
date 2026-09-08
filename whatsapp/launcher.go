@@ -83,6 +83,9 @@ type launcher struct {
 	templates TemplateFetcher
 	// resolver decides which ADK session an inbound WhatsApp message belongs to.
 	resolver SessionResolver
+	// gate admits inbound senders and names the ADK user a turn runs as. Nil
+	// admits everyone as the ADK user derived from their number by [UserID].
+	gate Gate
 	// runtime runs the agent in-process using the services already wired into the
 	// ADK launcher config, so a WhatsApp turn shares session, memory, and artifact
 	// state with every other surface the agent is launched on.

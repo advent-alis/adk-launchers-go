@@ -43,6 +43,21 @@ func WithSender(sender Sender) Option {
 	}
 }
 
+// WithGate sets the [Gate] that admits inbound senders, and names the ADK user
+// each admitted turn runs as.
+//
+// Without one every sender reaches the agent as the ADK user [UserID] derives
+// from their number, which is the right default for an agent that serves anyone
+// who messages it. Supply a gate when the agent must know who it is talking to.
+// A nil gate is ignored.
+func WithGate(gate Gate) Option {
+	return func(l *launcher) {
+		if gate != nil {
+			l.gate = gate
+		}
+	}
+}
+
 // WithTemplateTimeout caps how long startup waits on Twilio while resolving the
 // catalog. Zero means [DefaultTemplateTimeout].
 func WithTemplateTimeout(timeout time.Duration) Option {
