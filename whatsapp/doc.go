@@ -154,6 +154,9 @@
 // routes to the agent's service, so there is no separate host. That URL is what
 // the Twilio signature is computed over; use [WithBaseURL] when the origin the
 // launcher reconstructs from the request differs from what was configured there.
+// If another service fronts the webhook and forwards it here, pin [WithBaseURL]
+// to that public origin and [WithTaskURL] to this service's own — the
+// signature is checked against the first, the Cloud Task is sent to the second.
 //
 // In the neuron's infra/ Terraform, provision a google_cloud_tasks_queue whose
 // name matches Config.Queue. Set retry_config.max_attempts to 1: a retried task

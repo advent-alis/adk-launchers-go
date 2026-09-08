@@ -28,19 +28,27 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 
 	// Validate before trusting anything in the form: this endpoint is public,
 	// and the signature is what proves Twilio sent it.
-	// The origin Twilio called, used for the signature check and the task
-	// callback. Cloud Run and ngrok both terminate TLS upstream, so the inbound
-	// request is plaintext while the URL Twilio signed is https.
-	var callbackURL string
+	// The origin Twilio called, which is what it signed. Cloud Run and ngrok both
+	// terminate TLS upstream, so the inbound request is plaintext while the URL
+	// Twilio signed is https.
+	var signatureURL string
 	{
 		switch {
 		case l.pinnedBaseURL != "":
-			callbackURL = l.pinnedBaseURL
+			signatureURL = l.pinnedBaseURL
 		case r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")):
-			callbackURL = "http://" + r.Host
+			signatureURL = "http://" + r.Host
 		default:
-			callbackURL = "https://" + r.Host
+			signatureURL = "https://" + r.Host
 		}
+	}
+
+	// Where Cloud Tasks calls back to run the agent. The same origin as the
+	// webhook, unless another service fronts it: that origin does not serve
+	// TaskPath, so the caller pins this one separately.
+	taskURL := l.pinnedTaskURL
+	if taskURL == "" {
+		taskURL = signatureURL
 	}
 	validator := client.NewRequestValidator(l.cfg.AuthToken)
 	signature := r.Header.Get("X-Twilio-Signature")
@@ -64,8 +72,8 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 	// This check must happen before any other processing, because it proves that
 	// Twilio sent the webhook. Otherwise an attacker could send a fake webhook
 	// with arbitrary form values and make us run an agent on them.
-	if !validator.Validate(callbackURL+WebhookPath, params, signature) {
-		alog.Warnf(r.Context(), "whatsapp: rejecting webhook with invalid signature for %s", callbackURL+WebhookPath)
+	if !validator.Validate(signatureURL+WebhookPath, params, signature) {
+		alog.Warnf(r.Context(), "whatsapp: rejecting webhook with invalid signature for %s", signatureURL+WebhookPath)
 		return alismux.UnauthorizedErr("invalid twilio signature")
 	}
 
@@ -83,7 +91,7 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("whatsapp: marshal inbound: %w", err)
 	}
 	if err := (&tasks.Task{
-		URL:    callbackURL + TaskPath,
+		URL:    taskURL + TaskPath,
 		Method: http.MethodPost,
 		Body:   body,
 		Time:   time.Now().UTC(),

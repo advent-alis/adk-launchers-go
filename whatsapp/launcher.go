@@ -97,11 +97,19 @@ type launcher struct {
 	// templateTimeout caps the Twilio calls that resolve the catalog.
 	templateTimeout time.Duration
 
-	// pinnedBaseURL is the origin used for the Twilio signature check and the Cloud Task callback.
-	// By default the origin is derived from the inbound request, which is correct on
-	// Cloud Run and behind a proxy that preserves Host. Pin it when it is not — a
-	// mismatch fails the signature check, since Twilio signs the URL it called.
+	// pinnedBaseURL is the origin the Twilio signature is checked against: the URL
+	// Twilio was configured to call. By default it is derived from the inbound
+	// request, which is correct on Cloud Run and behind a proxy that preserves
+	// Host. Pin it when it is not — a mismatch fails the signature check, since
+	// Twilio signs the URL it called.
 	pinnedBaseURL string
+
+	// pinnedTaskURL is the origin Cloud Tasks calls back on. It differs from
+	// pinnedBaseURL only when something other than this service serves the
+	// webhook — a BFF proxying it, say — because the signature must then be
+	// checked against that public origin while the task must still reach a host
+	// serving TaskPath. Empty means the two are the same.
+	pinnedTaskURL string
 
 	// setupOnce guards the one-time setup of the runtime and the catalog, which
 	// must happen before the webhook and task handler can serve traffic. The

@@ -49,12 +49,24 @@ func WithTemplateTimeout(timeout time.Duration) Option {
 	return func(l *launcher) { l.templateTimeout = timeout }
 }
 
-// WithBaseURL pins the origin used for the Twilio signature check and the Cloud
-// Task callback, e.g. "https://my-agent-abc123.a.run.app".
+// WithBaseURL pins the origin the Twilio signature is checked against, e.g.
+// "https://my-agent-abc123.a.run.app".
 //
 // By default the origin is derived from the inbound request, which is correct on
 // Cloud Run and behind a proxy that preserves Host. Pin it when it is not — a
 // mismatch fails the signature check, since Twilio signs the URL it called.
+//
+// Pinning it to an origin this service does not itself serve — a BFF that
+// proxies the webhook — also moves the Cloud Task callback there, which that
+// origin will not serve. Pair it with [WithTaskURL] in that case.
 func WithBaseURL(baseURL string) Option {
 	return func(l *launcher) { l.pinnedBaseURL = strings.TrimSuffix(baseURL, "/") }
+}
+
+// WithTaskURL pins the origin Cloud Tasks calls back on, when it differs from
+// the origin Twilio called — e.g. a gateway fronts the webhook. Defaults to the
+// signature origin, which is correct whenever this service serves both
+// [WebhookPath] and [TaskPath].
+func WithTaskURL(taskURL string) Option {
+	return func(l *launcher) { l.pinnedTaskURL = strings.TrimSuffix(taskURL, "/") }
 }
