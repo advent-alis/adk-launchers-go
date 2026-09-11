@@ -30,28 +30,14 @@ const ResetCommand = "/new"
 // a hex digit, so an id from any other source can never begin with it.
 const SessionPrefix = "wa"
 
-// UserID returns the ADK user ID for a WhatsApp sender in E.164.
-//
-// The mapping is deterministic and prefixed, so a WhatsApp participant is a
-// distinct ADK user from the same human signed into the console. Sessions and
-// memory therefore do not cross between the two surfaces.
-//
-// This is the identity of an unidentified sender, and it is what a launcher with
-// no [Gate] runs every turn as. A gate is the deliberate extra step: it resolves
-// the number to a platform identity and returns that as the ADK user instead, at
-// which point the two surfaces are one user and share memory. Conversations stay
-// apart either way — see [SessionPrefix].
-func UserID(phoneE164 string) string {
-	return "whatsapp:" + phoneE164
-}
-
 // SessionRequest is what a [SessionResolver] gets to decide with. It carries the
 // inbound message plus the session service, so a resolver may read prior
 // sessions and their events.
 type SessionRequest struct {
 	// AppName is the ADK app the message will run against.
 	AppName string
-	// UserID is the ADK user this WhatsApp sender maps to.
+	// UserID is the ADK user this turn runs as, found or created by
+	// [Config].Users before the turn began.
 	UserID string
 	// Text is the inbound message body (empty for a media-only message).
 	Text string

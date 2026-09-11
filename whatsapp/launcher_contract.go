@@ -29,7 +29,6 @@ import (
 // }
 // So these methods are satisfied here:
 
-
 // Keyword is the CLI sublauncher keyword: adk web ... whatsapp
 const Keyword = "whatsapp"
 

@@ -47,6 +47,19 @@ type Config struct {
 	// Catalog is the set of interactive components the agent may send. It may be
 	// empty, in which case the agent replies in plain text only.
 	Catalog Catalog
+	// Users resolves a sender to a user of the product's own account system,
+	// creating one the first time a number is seen.
+	//
+	// Required, and not optional by omission: a WhatsApp sender is a phone number,
+	// a phone number is not an account, and there is no safe default for that gap.
+	// A launcher that ran without one would admit every sender as an ADK user
+	// derived from their number, making the conversation history a bearer asset
+	// held by whoever holds the number next.
+	//
+	// It carries this package's one opinion about identity: a user exists before a
+	// session does. Whether a given sender may reach the agent at all is a
+	// separate question, answered by an optional [Gate] — see [WithGate].
+	Users UserStore
 }
 
 // Launcher is the public surface of [NewLauncher]. Compose it with
@@ -83,8 +96,11 @@ type launcher struct {
 	templates TemplateFetcher
 	// resolver decides which ADK session an inbound WhatsApp message belongs to.
 	resolver SessionResolver
-	// gate admits inbound senders and names the ADK user a turn runs as. Nil
-	// admits everyone as the ADK user derived from their number by [UserID].
+	// users finds the user behind a sender's number, and creates one when nobody
+	// holds it. Never nil: [NewLauncher] refuses to build a launcher without it.
+	users UserStore
+	// gate vetoes senders before their user is created. Nil admits everybody,
+	// which is the default: [Config].Users has already answered who they are.
 	gate Gate
 	// runtime runs the agent in-process using the services already wired into the
 	// ADK launcher config, so a WhatsApp turn shares session, memory, and artifact
@@ -143,7 +159,8 @@ var (
 //	    PhoneNumber: "+17405307773",
 //	    Queue:       "my-agent",
 //	    Catalog:     catalog,
-//	})
+//	    Users:       myUserStore{},
+//	}, whatsapp.WithGate(myGate{}))
 //	launchersweb.NewLauncher(webapi.NewLauncher(), wa)
 func NewLauncher(appName string, cfg Config, opts ...Option) Launcher {
 	// Validate the app name and config. The launcher cannot serve without them, so panic on invalid input.
@@ -161,6 +178,8 @@ func NewLauncher(appName string, cfg Config, opts ...Option) Launcher {
 			err = fmt.Errorf("whatsapp: config.PhoneNumber must be E.164 with a leading +, got %q", cfg.PhoneNumber)
 		case cfg.Queue == "":
 			err = fmt.Errorf("whatsapp: config.Queue is required")
+		case cfg.Users == nil:
+			err = fmt.Errorf("whatsapp: config.Users is required, since a phone number is not an account")
 		default:
 			err = cfg.Catalog.Validate()
 		}
@@ -195,6 +214,7 @@ func NewLauncher(appName string, cfg Config, opts ...Option) Launcher {
 		media:     sender,
 		templates: sender,
 		resolver:  IdleWindowResolver{},
+		users:     cfg.Users,
 	}
 
 	// Apply the options. They may replace the resolver, sender, or other fields.
@@ -204,10 +224,10 @@ func NewLauncher(appName string, cfg Config, opts ...Option) Launcher {
 
 	// Build the CLI flag set. It is reused on every Parse call, so the launcher can be reused in multiple CLI contexts.
 
-	// Instantiate the whatsapp sublauncher with the keyword "whatsapp". 
-	// The composing launcher mounts it under that path, e.g. /whatsapp/..., and 
+	// Instantiate the whatsapp sublauncher with the keyword "whatsapp".
+	// The composing launcher mounts it under that path, e.g. /whatsapp/..., and
 	// the CLI flag set is namespaced to that keyword, e.g. --whatsapp.app_name.
-	// where Keyword = "whatsapp" in this case. 
+	// where Keyword = "whatsapp" in this case.
 	fs := flag.NewFlagSet(Keyword, flag.ContinueOnError)
 
 	// Add the app name flag. It is required, but the launcher already validated it, so the default is safe.

@@ -43,13 +43,12 @@ func WithSender(sender Sender) Option {
 	}
 }
 
-// WithGate sets the [Gate] that admits inbound senders, and names the ADK user
-// each admitted turn runs as.
+// WithGate sets the [Gate] that decides whether an inbound sender may reach the
+// agent at all.
 //
-// Without one every sender reaches the agent as the ADK user [UserID] derives
-// from their number, which is the right default for an agent that serves anyone
-// who messages it. Supply a gate when the agent must know who it is talking to.
-// A nil gate is ignored.
+// Optional, and subtractive: [Config].Users already says who a sender is, so a
+// gate only ever takes senders away. Without one everybody proceeds and every
+// number ends up with an account. A nil gate is ignored.
 func WithGate(gate Gate) Option {
 	return func(l *launcher) {
 		if gate != nil {

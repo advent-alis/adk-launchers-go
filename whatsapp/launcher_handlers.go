@@ -78,8 +78,8 @@ func (l *launcher) handleWebhook(w http.ResponseWriter, r *http.Request) error {
 		return alismux.UnauthorizedErr("invalid twilio signature")
 	}
 
-	// Parse the inbound message. 
-	// This is cheap: the form is small (the ack budget is tight) and the task body small 
+	// Parse the inbound message.
+	// This is cheap: the form is small (the ack budget is tight) and the task body small
 	// (Cloud Tasks caps it at 1 MB, well under WhatsApp's 16 MB media limit).
 	in := parseInbound(r.Form)
 	if in.From == "" {
@@ -118,28 +118,40 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx := r.Context()
 
-	// Admit the sender, and learn who the agent runs as.
+	// Resolve the sender to a user, and let any gate veto before one exists.
 	//
 	// This is the perimeter, and it is deliberately the first thing after the
 	// payload: nothing below has happened yet, so a refused sender costs no media
 	// fetch, touches no session, and leaves no message in a conversation history.
-	// Without a gate every sender is admitted as the ADK user derived from their
-	// number, which is this package's behaviour on its own.
-	userID := UserID(in.From)
+	// The lookup is unconditional — [Config].Users is required — because a phone
+	// number is not an account, and running an agent for a sender the product
+	// cannot place would make the conversation history a bearer asset.
+	userID, err := l.users.FindByPhoneNumber(ctx, in.From)
+	if err != nil {
+		return fmt.Errorf("whatsapp: find user for %s: %w", in.From, err)
+	}
+
+	// The gate sits between the lookup and the creation, so a sender it turns away
+	// is never created. It is told which case this is by GateRequest.UserID, empty
+	// meaning this message would open an account.
 	stateDelta := l.stateDelta
 	if l.gate != nil {
-		decision, err := l.gate.Admit(ctx, &GateRequest{PhoneNumber: in.From, Text: in.AgentText()})
+		decision, err := l.gate.Admit(ctx, &GateRequest{
+			PhoneNumber:   in.From,
+			UserID:        userID,
+			Text:          in.AgentText(),
+			ButtonPayload: in.ButtonPayload,
+		})
 		if err != nil {
 			return fmt.Errorf("whatsapp: gate %s: %w", in.From, err)
 		}
-
 		if decision == nil {
 			return fmt.Errorf("whatsapp: gate %s returned neither a decision nor an error", in.From)
 		}
 
-		// No user named is a refusal. Say whatever the gate wanted said, and run
-		// nothing — a refusal is a decision, so the task is done, not failed.
-		if decision.UserID == "" {
+		// Say whatever the gate wanted said, and run nothing — a refusal is a
+		// decision, so the task is done, not failed.
+		if !decision.Allow {
 			if decision.Reply == nil {
 				alog.Infof(ctx, "whatsapp: refusing %s with no reply to send", in.From)
 				return nil
@@ -165,8 +177,6 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 			return nil
 		}
 
-		userID = decision.UserID
-
 		// Merge the gate's state under the launcher's own, mutating neither:
 		// l.stateDelta is built once and reused on every message. The launcher's
 		// keys win because [StateKey] holds the resolved catalog the model's
@@ -178,6 +188,23 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 			maps.Copy(stateDelta, decision.State)
 			maps.Copy(stateDelta, l.stateDelta)
 		}
+	}
+
+	// Nobody holds this number yet, so this message opens an account. The number
+	// arrived on a signature-verified webhook, which is all the proof there is and
+	// all there is going to be.
+	if userID == "" {
+		userID, err = l.users.CreateByPhoneNumber(ctx, in.From)
+		if err != nil {
+			return fmt.Errorf("whatsapp: create user for %s: %w", in.From, err)
+		}
+		// A store returning neither a user nor an error would leave the run with
+		// no owner, which the runtime rejects further down anyway — name it here,
+		// where the cause is still in view.
+		if userID == "" {
+			return fmt.Errorf("whatsapp: user store created no user for %s", in.From)
+		}
+		alog.Infof(ctx, "whatsapp: opened an account for %s", in.From)
 	}
 
 	// Turn the inbound message into the agent's user turn, fetching any media

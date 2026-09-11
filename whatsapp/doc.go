@@ -47,13 +47,26 @@
 // The signature proves a message came from Twilio. It says nothing about who
 // sent it — a sender is a phone number, and a phone number is not an account.
 // Closing that gap needs an identity system this package deliberately knows
-// nothing about, so it lives behind [Gate].
+// nothing about, so it lives behind [UserStore].
 //
-// Without one, every sender reaches the agent as the ADK user [UserID] derives
-// from their number: right for an agent that serves whoever messages it. With
-// one, [Gate.Admit] runs first on every message and either names the ADK user the
-// turn runs as, or refuses and hands back the message to send instead —
-// typically a template with a sign-in button.
+// Closing it is required — there is no safe default — and it is answered in two
+// parts, one of them optional.
+//
+// [Config].Users takes a [UserStore], and is required: find the user holding this
+// number, and create one if nobody does. Two methods, no refusals. It carries
+// this package's one opinion about identity — a user exists before a session
+// does — and because it cannot be omitted, that opinion holds for every launcher.
+//
+// [WithGate] takes a [Gate], and is optional: may this sender proceed at all? It
+// is asked between the two halves of the store, so a sender it turns away is
+// never created, and it is told which case this is by GateRequest.UserID. Without
+// one everybody proceeds.
+//
+// The split is the point. Who a sender is has one answer and the store always
+// gives it; whether they may talk is a separate question most products do not
+// need to ask. Note what a store alone means, though: possession of the number is
+// the whole credential, nothing expires, and a reassigned number inherits the
+// previous holder's account.
 //
 // It runs on the task rather than the webhook, though it is logically the first
 // thing after the signature. Admitting a sender usually costs a network call and
@@ -66,6 +79,11 @@
 // loaded. Nothing about a refused sender is recorded, which is the point — the
 // alternative leaves a stranger's message in the session history of whoever the
 // number is bound to later.
+//
+// That also means a gate holds no state between turns, so an exchange spanning
+// several messages is driven by what comes back rather than by what the gate
+// remembers: refuse with a quick-reply template, and the payload of the button
+// they tap arrives on the next message as GateRequest.ButtonPayload.
 //
 // # Sessions
 //
@@ -89,15 +107,22 @@
 // MemoryService on the launcher config and the agent remembers across sessions
 // without this package holding old conversations in context.
 //
-// A WhatsApp sender maps to the ADK user ID returned by [UserID], which is
-// prefixed and therefore distinct from the same human signed into the console.
+// Which ADK user a turn runs as is this package's decision, taken on every
+// message: ask [Config].Users for the user holding the sender's number, and ask
+// it to create one when nobody does. A store returning the id the platform
+// already knows the sender by makes their WhatsApp turns and their console turns
+// one ADK user, sharing memory.
+//
+// The package decides to create; the store performs it. Nothing here invents an
+// id — the store's answer is the whole of it — and nothing here proceeds without
+// one, so there is no session that belongs to a number rather than an account.
 //
 // Sessions are kept to this channel independently of that, by [SessionPrefix].
 // The same agent is usually reachable from a web console or a cron as well, and
 // those runs share its ADK app — so without a marker, a WhatsApp message could
 // resume whatever the person was last doing on the web. Only sessions minted
 // here carry the prefix, and only those are continued. The two mechanisms are
-// deliberately separate: resolving a phone number to a platform identity later
+// deliberately separate: a store resolving a phone number to a platform identity
 // merges memory across channels without also merging conversations.
 //
 // # Components
@@ -165,6 +190,9 @@
 //	         ContentSid:  "HX2d1f8c480573d02b446da6eb2cc442c0",
 //	         Description: "Ask the user a question they answer by tapping a button."},
 //	    },
+//	    // Required. Finds the user holding the sender's number, and creates one
+//	    // the first time a number is seen.
+//	    Users: myUserStore{},
 //	})
 //	launcher := launchersweb.NewLauncher(webapi.NewLauncher(), wa)
 //
@@ -198,6 +226,7 @@
 //	                       what a caller supplies to the server being ready
 //	launcher_options.go    [Option] and the With… functions
 //	launcher_contract.go   the [adkweb.Sublauncher] methods the web launcher calls
+//	launcher_identity.go   [UserStore] — find or create the user behind a number
 //	launcher_gate.go       [Gate] — who a sender is, and whether they may talk
 //	launcher_handlers.go   what runs when those routes are hit, and outbound delivery
 //
@@ -208,7 +237,7 @@
 //	twilio_template.go     content template to [Resolved] fields
 //
 //	adk_runtime.go         running the agent in-process
-//	adk_session.go         [UserID], [SessionPrefix], and [SessionResolver]
+//	adk_session.go         [SessionPrefix] and [SessionResolver]
 //	adk_toolset.go         resolved catalog to tools the model sees
 //
 // # What this package does not do
@@ -220,6 +249,14 @@
 //     replied-to message reaches [SessionResolver] as
 //     SessionRequest.RepliedToMessageSid, but mapping a SID back to the session
 //     that produced it needs a store this package does not own.
+//   - It does not keep any record of who a number belongs to. A [UserStore] or
+//     [Gate] is asked on every message and the answer is used for that turn only;
+//     the account itself, and the binding between it and the number, live in the
+//     product's own identity system.
+//   - It does not link a number to the same person's profile on another surface.
+//     Joining a WhatsApp sender to an existing console account needs proof that
+//     the person holds both, which is a flow with a browser or a verification
+//     code in it — outside a package whose whole input is one inbound message.
 //   - It does not open the 24-hour customer-service window. Outside that window
 //     WhatsApp permits only template messages, so an agent that speaks first —
 //     from a cron, say — must do so through a component.

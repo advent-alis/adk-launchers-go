@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,7 +51,7 @@ func refusingGate(reply *Outbound) Gate {
 // still goes to the number the gate just judged.
 func TestHandleTask_RefusalAimsAtTheSender(t *testing.T) {
 	sender := &recordingSender{}
-	l := &launcher{sender: sender, gate: refusingGate(&Outbound{
+	l := &launcher{sender: sender, users: knownStore("users-1"), gate: refusingGate(&Outbound{
 		To:   "+15550009999", // the number the gate asked for, and must not get
 		Text: "please sign in",
 	})}
@@ -75,7 +76,7 @@ func TestHandleTask_RefusalChunksTextButNotTemplates(t *testing.T) {
 	t.Run("long text", func(t *testing.T) {
 		sender := &recordingSender{}
 		body := strings.TrimSpace(strings.Repeat("word ", 500)) // 2500 runes
-		l := &launcher{sender: sender, gate: refusingGate(&Outbound{Text: body})}
+		l := &launcher{sender: sender, users: knownStore("users-1"), gate: refusingGate(&Outbound{Text: body})}
 
 		req := taskRequest(t, &Inbound{From: "+27821112222", Body: "hello"})
 		if err := l.handleTask(httptest.NewRecorder(), req); err != nil {
@@ -88,7 +89,7 @@ func TestHandleTask_RefusalChunksTextButNotTemplates(t *testing.T) {
 
 	t.Run("template", func(t *testing.T) {
 		sender := &recordingSender{}
-		l := &launcher{sender: sender, gate: refusingGate(&Outbound{
+		l := &launcher{sender: sender, users: knownStore("users-1"), gate: refusingGate(&Outbound{
 			ContentSid:       "HX123",
 			ContentVariables: map[string]string{"1": "I do not recognise this number yet."},
 		})}
@@ -113,7 +114,7 @@ func TestHandleTask_RefusalChunksTextButNotTemplates(t *testing.T) {
 // rather than turned away.
 func TestHandleTask_RefusalWithNoReplySendsNothing(t *testing.T) {
 	sender := &recordingSender{}
-	l := &launcher{sender: sender, gate: refusingGate(nil)}
+	l := &launcher{sender: sender, users: knownStore("users-1"), gate: refusingGate(nil)}
 
 	req := taskRequest(t, &Inbound{From: "+27821112222", Body: "hello"})
 	if err := l.handleTask(httptest.NewRecorder(), req); err != nil {
@@ -124,28 +125,167 @@ func TestHandleTask_RefusalWithNoReplySendsNothing(t *testing.T) {
 	}
 }
 
-// TestWithGate_NilIsIgnored keeps a nil gate from disabling the default, which
-// would silently admit nobody rather than everybody.
-func TestWithGate_NilIsIgnored(t *testing.T) {
-	l := &launcher{}
-	WithGate(nil)(l)
+// storeFunc adapts a pair of functions to [UserStore].
+type storeFunc struct {
+	find   func(context.Context, string) (string, error)
+	create func(context.Context, string) (string, error)
+}
+
+func (f storeFunc) FindByPhoneNumber(ctx context.Context, phone string) (string, error) {
+	return f.find(ctx, phone)
+}
+
+func (f storeFunc) CreateByPhoneNumber(ctx context.Context, phone string) (string, error) {
+	return f.create(ctx, phone)
+}
+
+// knownStore finds every number already held by userID, and fails the test if
+// asked to create anybody.
+func knownStore(userID string) UserStore {
+	return storeFunc{
+		find: func(_ context.Context, _ string) (string, error) { return userID, nil },
+		create: func(_ context.Context, phone string) (string, error) {
+			return "", errors.New("create called for " + phone)
+		},
+	}
+}
+
+// TestNewLauncher_RequiresUsers keeps the perimeter from being optional. Without
+// a store there is nobody for a session to belong to, and every sender would be
+// admitted as an ADK user derived from their number — which makes the
+// conversation history a bearer asset held by whoever holds the number next.
+func TestNewLauncher_RequiresUsers(t *testing.T) {
+	cfg := Config{
+		AccountSid:  "AC00000000000000000000000000000000",
+		AuthToken:   "token",
+		PhoneNumber: "+17405307773",
+		Queue:       "whatsapp-inbound",
+	}
+
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("NewLauncher with no Users did not panic")
+			}
+			if msg, _ := r.(string); !strings.Contains(msg, "config.Users is required") {
+				t.Errorf("panicked with %v, want a missing-store error", r)
+			}
+		}()
+		NewLauncher("app", cfg)
+	}()
+
+	cfg.Users = knownStore("users-1")
+	l, ok := NewLauncher("app", cfg).(*launcher)
+	if !ok {
+		t.Fatal("NewLauncher returned something other than *launcher")
+	}
+	if l.users == nil {
+		t.Error("Config.Users did not reach the launcher")
+	}
+	// A gate is the optional half: no WithGate, nobody vetoed.
 	if l.gate != nil {
-		t.Error("WithGate(nil) set a gate")
+		t.Error("a launcher with no WithGate has a gate")
+	}
+}
+
+// TestHandleTask_RefusedSenderIsNeverCreated is why the gate runs between the
+// lookup and the creation. Turning somebody away must not leave an account
+// behind under their number.
+func TestHandleTask_RefusedSenderIsNeverCreated(t *testing.T) {
+	created := false
+	sender := &recordingSender{}
+	l := &launcher{
+		sender: sender,
+		users: storeFunc{
+			find: func(_ context.Context, _ string) (string, error) { return "", nil },
+			create: func(_ context.Context, _ string) (string, error) {
+				created = true
+				return "users-new", nil
+			},
+		},
+		gate: refusingGate(&Outbound{Text: "we are not open yet"}),
 	}
 
-	admitAll := gateFunc(func(_ context.Context, req *GateRequest) (*GateDecision, error) {
-		return &GateDecision{UserID: "users/" + req.PhoneNumber}, nil
-	})
-	WithGate(admitAll)(l)
-	if l.gate == nil {
-		t.Fatal("WithGate did not set the gate")
+	req := taskRequest(t, &Inbound{From: "+27821112222", Body: "hello"})
+	if err := l.handleTask(httptest.NewRecorder(), req); err != nil {
+		t.Fatalf("handleTask: %v", err)
 	}
 
-	decision, err := l.gate.Admit(context.Background(), &GateRequest{PhoneNumber: "+27821112222"})
-	if err != nil {
-		t.Fatalf("Admit: %v", err)
+	if created {
+		t.Error("a refused sender was created anyway")
 	}
-	if decision.UserID != "users/+27821112222" {
-		t.Errorf("UserID = %q", decision.UserID)
+	if len(sender.sent) != 1 {
+		t.Fatalf("sent %d messages, want the refusal", len(sender.sent))
 	}
+}
+
+// TestHandleTask_GateSeesWhetherTheSenderIsNew covers the field a closed beta is
+// made of: GateRequest.UserID is empty exactly when this message would open an
+// account.
+func TestHandleTask_GateSeesWhetherTheSenderIsNew(t *testing.T) {
+	tests := []struct {
+		name  string
+		found string
+		want  string
+	}{
+		{name: "returning sender", found: "users-1", want: "users-1"},
+		{name: "new sender", found: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var seen *GateRequest
+			l := &launcher{
+				sender: &recordingSender{},
+				users: storeFunc{
+					find:   func(_ context.Context, _ string) (string, error) { return tt.found, nil },
+					create: func(_ context.Context, _ string) (string, error) { return "users-new", nil },
+				},
+				// Refuses, so the turn stops before the runtime the test has not built.
+				gate: gateFunc(func(_ context.Context, req *GateRequest) (*GateDecision, error) {
+					seen = req
+					return &GateDecision{}, nil
+				}),
+			}
+
+			req := taskRequest(t, &Inbound{From: "+27821112222", Body: "hello"})
+			if err := l.handleTask(httptest.NewRecorder(), req); err != nil {
+				t.Fatalf("handleTask: %v", err)
+			}
+			if seen == nil {
+				t.Fatal("the gate was not consulted")
+			}
+			if seen.UserID != tt.want {
+				t.Errorf("gate saw UserID %q, want %q", seen.UserID, tt.want)
+			}
+			if seen.PhoneNumber != "+27821112222" {
+				t.Errorf("gate saw PhoneNumber %q", seen.PhoneNumber)
+			}
+		})
+	}
+}
+
+// TestHandleTask_NoGateAdmitsEverybody is the default: with no WithGate the
+// lookup and the creation run back to back and nobody is turned away.
+func TestHandleTask_NoGateAdmitsEverybody(t *testing.T) {
+	sender := &recordingSender{}
+	l := &launcher{
+		sender: sender,
+		users: storeFunc{
+			find:   func(_ context.Context, _ string) (string, error) { return "users-1", nil },
+			create: func(_ context.Context, _ string) (string, error) { return "", errors.New("create called") },
+		},
+	}
+
+	// No runtime is wired, so an admitted turn panics rather than running. That it
+	// gets that far is the assertion: nothing refused it and nothing was sent.
+	defer func() {
+		_ = recover()
+		if len(sender.sent) != 0 {
+			t.Errorf("sent %d messages without a gate to refuse anybody", len(sender.sent))
+		}
+	}()
+	req := taskRequest(t, &Inbound{From: "+27821112222", Body: "hello"})
+	_ = l.handleTask(httptest.NewRecorder(), req)
 }

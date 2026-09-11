@@ -46,6 +46,73 @@ for whose it is. Left public, anyone could post a payload and take over any
 user's session — hence `SystemPost`, which validates the OIDC token Cloud Tasks
 attaches as the environment service account.
 
+### Admission
+
+The signature proves a message came from Twilio. It says nothing about who sent
+it — a sender is a phone number, and a phone number is not an account. Closing
+that gap needs an identity system this package knows nothing about, so it lives
+behind `UserStore`.
+
+Closing it is **required** — `NewLauncher` refuses to build without it — and it
+comes in two parts, one of them optional.
+
+**`Config.Users`** (required) — a `UserStore`. Find the user holding this number;
+create one if nobody does. This is the package's one opinion about identity: a
+user exists before a session does, and since the field can't be omitted, it holds
+for every launcher.
+
+```go
+type UserStore interface {
+    FindByPhoneNumber(ctx context.Context, e164 string) (userID string, err error)   // "" = not found
+    CreateByPhoneNumber(ctx context.Context, e164 string) (userID string, err error)
+}
+```
+
+Nothing here says what a user *is*. Whatever your definition, it needs an id and
+it must be addressable by WhatsApp number — the launcher neither sees nor stores
+anything else. Note the trade: possession of the number becomes the whole
+credential, and nothing expires.
+
+**`WithGate`** (optional) — a `Gate`. May this sender proceed at all? It runs
+**between** the two halves of the store, so a sender it refuses is never created:
+
+```
+Find ──▶ Gate ──▶ Create (only if Find found nobody) ──▶ run the agent
+             └──▶ refuse: send a message, no user, no session, no agent
+```
+
+`GateRequest.UserID` is what the store found, empty when this message would open
+an account — which is what a closed beta is made of:
+
+```go
+func (g myGate) Admit(ctx context.Context, req *whatsapp.GateRequest) (*whatsapp.GateDecision, error) {
+    if req.UserID == "" {
+        return &whatsapp.GateDecision{
+            Reply: &whatsapp.Outbound{Text: "We're not open to new users yet."},
+        }, nil
+    }
+    return &whatsapp.GateDecision{Allow: true}, nil
+}
+```
+
+`Allow` is false by default, so a decision a gate forgot to fill in refuses
+rather than admits. An error is a fault — return one only for a check that could
+not be performed.
+
+All of it runs on the task, before any attachment is fetched, before a session is
+resolved or created, and before the agent is loaded.
+
+Nothing about a refused sender is recorded, which also means the gate has nothing
+to remember with. An exchange spanning several messages is carried by the answers
+instead: refuse with a quick-reply template, and the payload of the button the
+sender taps arrives on the next call as `GateRequest.ButtonPayload` — enough to
+ask a question on one message and act on the answer to the next.
+
+What a gate cannot do is change the terms. Allowing a sender means the store
+creates them as the holder of their number; there is no "refuse now, create
+differently later". A flow that needs that — proving an email before the account
+exists, say — belongs outside this package.
+
 ### Agent side
 
 Add the toolset to the agent this launcher serves. Each catalog entry becomes a
@@ -142,7 +209,10 @@ wa := whatsapp.NewLauncher("my.agent", whatsapp.Config{
          ContentSid:  "HX2d1f8c480573d02b446da6eb2cc442c0",
          Description: "Ask the user a question they answer by tapping a button."},
     },
-})
+    // Required. Finds the user holding the sender's number, and creates one
+    // the first time a number is seen.
+    Users: myUserStore{},
+}, whatsapp.WithGate(myGate{}))   // optional
 launcher := launchersweb.NewLauncher(webapi.NewLauncher(), wa)
 ```
 
@@ -209,11 +279,12 @@ Sessions minted here are prefixed (`SessionPrefix`), and only prefixed sessions
 are continued. A bare UUID from another channel never matches, because the rest
 of a minted id is hex and `w` is not a hex digit.
 
-That is deliberately separate from identity. `UserID` prefixes the phone number
-today, so a WhatsApp sender is already a different ADK user from the same human
-on the console — but if you later resolve phone numbers to platform identities so
-memory follows the person, the session prefix keeps the conversations apart
-anyway.
+That is deliberately separate from identity. The launcher asks the store for the
+ADK user on every message, so a store that returns the id the platform already
+knows the sender by makes their WhatsApp turns and their console turns a single
+ADK user that shares memory — and the session prefix still keeps the two
+conversations apart. The launcher decides *that* a user is needed; the store
+decides *who*, and performs the write.
 
 Replace the policy with `WithSessionResolver`. A resolver receives the session
 service, so it may read prior sessions and their events to decide.
@@ -229,6 +300,12 @@ Long-horizon recall is a separate concern with its own ADK answer: configure a
 - **Reviving an old session from a quote-reply.** The replied-to message SID
   reaches the resolver as `SessionRequest.RepliedToMessageSid`, but mapping a SID
   back to the session that produced it needs a store this package does not own.
+- **Keeping any record of who a number belongs to.** The store or gate is asked
+  on every message and the answer is used for that turn only. The account, and
+  its binding to the number, live in your identity system.
+- **Linking a number to the same person's profile on another surface.** That
+  needs proof the person holds both — a browser or a verification code — which is
+  outside a package whose entire input is one inbound message.
 - **Opening the 24-hour customer-service window.** Outside it WhatsApp permits
   only template messages, so an agent that speaks first must do so through a
   component.

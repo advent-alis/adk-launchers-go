@@ -59,7 +59,7 @@ func TestIdleWindowResolver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := IdleWindowResolver{Now: clock}.Resolve(context.Background(), &SessionRequest{
 				AppName:  "my.agent",
-				UserID:   UserID("+27836566942"),
+				UserID:   "users/2f9c1a",
 				Sessions: fakeSessionService{sessions: tt.sessions},
 			})
 			if err != nil {
@@ -95,12 +95,6 @@ func TestIdleWindowResolver_RequiresSessionService(t *testing.T) {
 	_, err := IdleWindowResolver{}.Resolve(context.Background(), &SessionRequest{AppName: "a", UserID: "u"})
 	if err == nil {
 		t.Fatal("expected an error when no session service is supplied")
-	}
-}
-
-func TestUserID(t *testing.T) {
-	if got := UserID("+27836566942"); got != "whatsapp:+27836566942" {
-		t.Fatalf("UserID() = %q", got)
 	}
 }
 

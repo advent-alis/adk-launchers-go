@@ -51,15 +51,15 @@ type MediaFetcher interface {
 // twilioSender sends over the Twilio REST API and fetches media from it.
 type twilioSender struct {
 	// The Twilio client is used to send messages and fetch content templates.
-	client     *twilio.RestClient
+	client *twilio.RestClient
 	// The Twilio account SID and auth token, used to fetch media.
 	accountSid string
 	// The Twilio account auth token, used to fetch media.
-	authToken  string
+	authToken string
 	// The Twilio WhatsApp number in E.164, without the "whatsapp:" prefix.
-	from       string // E.164, without the "whatsapp:" prefix
+	from string // E.164, without the "whatsapp:" prefix
 	// The HTTP client to fetch media. It must be configured with the account
-	http       *http.Client
+	http *http.Client
 }
 
 var (
@@ -68,7 +68,7 @@ var (
 	_ TemplateFetcher = (*twilioSender)(nil)
 )
 
-// Send 
+// Send
 // sends one message, either free text or a content template with its
 // variables. It returns the Twilio SID of the message, or an error.
 // Send implements [Sender].
@@ -167,7 +167,6 @@ func (s *twilioSender) FetchTemplate(_ context.Context, contentSid string) (*Tem
 		return nil, fmt.Errorf("whatsapp: re-encode template %s definition: %w", contentSid, err)
 	}
 
-	
 	return &Template{ContentSid: contentSid, Kind: chosen, Definition: encoded}, nil
 }
 

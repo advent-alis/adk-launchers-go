@@ -34,15 +34,15 @@ type Inbound struct {
 	RepliedToMessageSid string `json:"repliedToMessageSid,omitempty"`
 
 	// ButtonText and ButtonPayload are set when the user tapped a quick-reply
-	// button. 
-	ButtonText    string `json:"buttonText,omitempty"`
+	// button.
+	ButtonText string `json:"buttonText,omitempty"`
 	// ButtonPayload is the value the agent supplied when sending the button.
 	ButtonPayload string `json:"buttonPayload,omitempty"`
 	// ListTitle and ListID are set when the user picked a list-picker row.
 	ListTitle string `json:"listTitle,omitempty"`
-	// ListID is set when the user picked a list-picker row. 
+	// ListID is set when the user picked a list-picker row.
 	// It is the value the agent supplied when sending the list.
-	ListID    string `json:"listId,omitempty"`
+	ListID string `json:"listId,omitempty"`
 
 	// Media holds the attachments on this message.
 	Media []Attachment `json:"media,omitempty"`
