@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -134,7 +133,6 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 	// The gate sits between the lookup and the creation, so a sender it turns away
 	// is never created. It is told which case this is by GateRequest.UserID, empty
 	// meaning this message would open an account.
-	stateDelta := l.stateDelta
 	if l.gate != nil {
 		decision, err := l.gate.Admit(ctx, &GateRequest{
 			PhoneNumber:   in.From,
@@ -175,18 +173,6 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 			return nil
-		}
-
-		// Merge the gate's state under the launcher's own, mutating neither:
-		// l.stateDelta is built once and reused on every message. The launcher's
-		// keys win because [StateKey] holds the resolved catalog the model's
-		// component tools are derived from, and a gate overwriting it would leave
-		// the model holding tools whose schemas no longer match their templates —
-		// sends that fail, which reach the user as silence.
-		if len(decision.State) > 0 {
-			stateDelta = make(map[string]any, len(l.stateDelta)+len(decision.State))
-			maps.Copy(stateDelta, decision.State)
-			maps.Copy(stateDelta, l.stateDelta)
 		}
 	}
 
@@ -263,7 +249,7 @@ func (l *launcher) handleTask(w http.ResponseWriter, r *http.Request) error {
 		UserID:     userID,
 		SessionID:  sessionID,
 		Message:    msg,
-		StateDelta: stateDelta,
+		StateDelta: l.stateDelta,
 	})
 	if err != nil {
 		return err

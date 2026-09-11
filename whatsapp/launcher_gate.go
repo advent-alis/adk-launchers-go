@@ -82,20 +82,6 @@ type GateDecision struct {
 	// found none, and the agent runs. False refuses, and is the zero value — a
 	// decision a gate forgot to fill in refuses rather than admits.
 	Allow bool
-	// State merges into session state before the run, alongside the resolved
-	// component catalog. Somewhere to put what the gate learned about the sender,
-	// so the agent is told rather than having to ask.
-	//
-	// A gate that always allows and only writes state is a legitimate use of one:
-	// it is how a product puts the sender's own details in front of the model
-	// without the launcher having to know what those are.
-	//
-	// The launcher's own keys win a collision: [StateKey] holds the catalog the
-	// model's component tools are derived from, and overwriting it would leave
-	// the model holding tools whose schemas no longer match their templates.
-	//
-	// Unread when Allow is false: a refused turn has no session to merge into.
-	State map[string]any
 	// Reply is sent to a refused sender, as free text or a content template.
 	//
 	// Nil sends nothing, which is right for a sender to be ignored rather than
