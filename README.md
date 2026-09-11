@@ -113,6 +113,13 @@ creates them as the holder of their number; there is no "refuse now, create
 differently later". A flow that needs that — proving an email before the account
 exists, say — belongs outside this package.
 
+Neither half puts anything in front of the model. What reaches the agent is the
+ADK user id the store returned — `ReadonlyContext.UserID()` on every turn — and
+that is the handle it looks the sender up by when it needs more than an id.
+Nothing about the sender is injected into session state, so an agent that wants
+the number, a name, or an email reads its own user service rather than trusting a
+field this package carried across for it.
+
 ### Agent side
 
 Add the toolset to the agent this launcher serves. Each catalog entry becomes a
