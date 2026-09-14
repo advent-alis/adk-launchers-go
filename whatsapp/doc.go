@@ -92,6 +92,11 @@
 // remembers: refuse with a quick-reply template, and the payload of the button
 // they tap arrives on the next message as GateRequest.ButtonPayload.
 //
+// A refusal with a reply is also how a gate answers a message itself. Some
+// messages are commands rather than conversation — a code that binds the sender's
+// number to an account, say — and the agent must never see them. The gate acts on
+// the message, replies, and allows nothing.
+//
 // # Sessions
 //
 // WhatsApp has no thread concept: an inbound message carries a sender, a

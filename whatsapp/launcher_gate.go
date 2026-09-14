@@ -33,6 +33,12 @@ import "context"
 // that takes more than one message is carried by the answers rather than by
 // stored state: refuse with a quick-reply template, and the payload of the button
 // the sender taps arrives on the next call as [GateRequest].ButtonPayload.
+//
+// A refusal with a reply is also how a gate answers a message itself. Some
+// messages are commands rather than conversation — a code that binds the
+// sender's number to an account, say — and the agent must never see them. The
+// gate acts on the message, replies, and allows nothing: no user is created, no
+// session opens, and the code never reaches a model's context.
 type Gate interface {
 	// Admit decides on one inbound message.
 	//

@@ -108,6 +108,12 @@ instead: refuse with a quick-reply template, and the payload of the button the
 sender taps arrives on the next call as `GateRequest.ButtonPayload` — enough to
 ask a question on one message and act on the answer to the next.
 
+A refusal with a reply is also how a gate handles a message *itself*. Some
+messages are commands, not conversation — a code that links the sender's number
+to an account, say — and the agent must never see them. The gate acts on the
+message, replies, and allows nothing: no user is created, no session opens, and
+the code never lands in a model's context.
+
 What a gate cannot do is change the terms. Allowing a sender means the store
 creates them as the holder of their number; there is no "refuse now, create
 differently later". A flow that needs that — proving an email before the account
